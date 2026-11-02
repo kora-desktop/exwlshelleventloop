@@ -2726,14 +2726,6 @@ pub(crate) fn update<P: IcedProgram, E: Executor>(
     runtime.track(recipes);
 }
 
-/// Read one [`Kind`] of clipboard content.
-///
-/// [`Kind::Files`] does not go through `window_clipboard`, which speaks only
-/// text: a file list lives on the Wayland selection as `text/uri-list`, and the
-/// event loop is the one holding that offer. Everything else is text and reads
-/// the way it always has.
-///
-/// [`Kind`]: iced_core::clipboard::Kind
 /// The Wayland surface of the iced window `id`, if it is still shown.
 fn window_surface<P, C>(
     window_manager: &WindowManager<P, C>,
@@ -2750,6 +2742,14 @@ where
         .map(|unit| unit.get_wlsurface().clone())
 }
 
+/// Read one [`Kind`] of clipboard content.
+///
+/// [`Kind::Files`] does not go through `window_clipboard`, which speaks only
+/// text: a file list lives on the Wayland selection as `text/uri-list`, and the
+/// event loop is the one holding that offer. Everything else is text and reads
+/// the way it always has.
+///
+/// [`Kind`]: iced_core::clipboard::Kind
 fn read_kind(
     ev: &WindowState<IcedId>,
     clipboard: &LayerShellClipboard,
