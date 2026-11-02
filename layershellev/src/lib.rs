@@ -118,6 +118,8 @@ pub use events::RepositionPopUpSettings;
 pub use waycrate_xkbkeycode::keyboard;
 pub use waycrate_xkbkeycode::xkb_keyboard;
 
+mod activation_token;
+pub use activation_token::ActivationTokenReply;
 pub mod adaptive_foreground;
 pub mod background_effect;
 pub mod blur;
@@ -1248,6 +1250,9 @@ pub struct WindowState<T> {
     dnd_source_origin: Option<id::Id>,
     /// Serial of the most recent pointer button press (required by `start_drag`).
     last_button_serial: Option<u32>,
+    /// Serial of the latest user input (a pointer button, key or touch): what
+    /// an activation token is asked against.
+    last_input_serial: Option<u32>,
     /// Live drag-icon resources, kept alive for the duration of an outgoing drag.
     dnd_icon: Option<DndIconResources>,
     /// Compositor + shm cached at loop start (the originals are taken by the loop)
@@ -4178,6 +4183,7 @@ impl<T> Default for WindowState<T> {
             selection_offer: None,
             dnd_source_origin: None,
             last_button_serial: None,
+            last_input_serial: None,
             dnd_icon: None,
             cached_compositor: None,
             cached_shm: None,
@@ -4648,8 +4654,10 @@ impl<T> Dispatch<wl_keyboard::WlKeyboard, ()> for WindowState<T> {
             wl_keyboard::Event::Key {
                 state: keystate,
                 key,
+                serial,
                 ..
             } => {
+                state.last_input_serial = Some(serial);
                 let pressed_state = match keystate {
                     WEnum::Value(KeyState::Pressed) => ElementState::Pressed,
                     WEnum::Value(KeyState::Released) => ElementState::Released,
@@ -4772,6 +4780,7 @@ impl<T> Dispatch<wl_touch::WlTouch, ()> for WindowState<T> {
                 x,
                 y,
             } => {
+                state.last_input_serial = Some(serial);
                 state.finger_locations.insert(id, (x, y));
                 let surface_id = state.get_id_from_surface(&surface);
                 state
@@ -4963,6 +4972,7 @@ impl<T> Dispatch<wl_pointer::WlPointer, ()> for WindowState<T> {
                 // Remember the press serial — `wl_data_device.start_drag` needs the
                 // serial of the input event that began the drag.
                 state.last_button_serial = Some(serial);
+                state.last_input_serial = Some(serial);
                 let mouse_surface = mouse_surface.cloned();
                 state.update_current_surface(mouse_surface);
                 state.message.push((
@@ -9357,6 +9367,9 @@ mod output_info_tests;
 
 #[cfg(test)]
 mod size_answer_tests;
+
+#[cfg(test)]
+mod activation_token_tests;
 
 #[cfg(test)]
 mod tests {

@@ -2734,6 +2734,22 @@ pub(crate) fn update<P: IcedProgram, E: Executor>(
 /// the way it always has.
 ///
 /// [`Kind`]: iced_core::clipboard::Kind
+/// The Wayland surface of the iced window `id`, if it is still shown.
+fn window_surface<P, C>(
+    window_manager: &WindowManager<P, C>,
+    ev: &WindowState<IcedId>,
+    id: IcedId,
+) -> Option<wayland_client::protocol::wl_surface::WlSurface>
+where
+    P: IcedProgram,
+    C: Compositor<Renderer = P::Renderer>,
+    P::Theme: DefaultStyle,
+{
+    let window = window_manager.get(id)?;
+    ev.get_unit_with_id(window.id)
+        .map(|unit| unit.get_wlsurface().clone())
+}
+
 fn read_kind(
     ev: &WindowState<IcedId>,
     clipboard: &LayerShellClipboard,
@@ -3065,6 +3081,21 @@ pub(crate) fn run_action<P, C, E: Executor>(
                     user_interfaces.invalidate(&iced_id);
                 }
                 ev.request_refresh_all(RefreshRequest::NextFrame);
+            }
+            WindowAction::RequestActivationToken(id, channel) => {
+                match window_surface(window_manager, ev, id) {
+                    Some(surface) => ev.request_activation_token(&surface, move |token| {
+                        let _ = channel.send(token);
+                    }),
+                    None => {
+                        let _ = channel.send(None);
+                    }
+                }
+            }
+            WindowAction::Activate(id, token) => {
+                if let Some(surface) = window_surface(window_manager, ev, id) {
+                    ev.activate_surface_with_token(&surface, token);
+                }
             }
             _ => {}
         },
