@@ -1930,7 +1930,7 @@ impl<T: 'static> WindowState<T> {
                         .ok();
                 }
             })
-            .expect("Error during event loop!");
+            .map_err(SessionLockEventError::EventLoopInitError)?;
         Ok(())
     }
 }
