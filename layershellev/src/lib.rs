@@ -8386,6 +8386,8 @@ impl<T: 'static> WindowState<T> {
                                             .iter()
                                             .find(|(n, _)| n == name)
                                             .map(|(_, o)| o.clone()),
+                                        // No output, not the focused surface's: the compositor puts it under the pointer.
+                                        _ if follow_pointer => None,
                                         _ => {
                                             let pos = window_state.surface_pos();
 
