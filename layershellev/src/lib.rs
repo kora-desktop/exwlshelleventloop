@@ -3856,6 +3856,21 @@ fn register_size_transition_for_surface<T: 'static>(
     Some(manager.get_size_transition(surface, qh, data))
 }
 
+/// Ask to be shown under the pointer, before the first commit so the first map honours it.
+/// An older compositor keeps the surface on its active output.
+fn apply_follow_pointer_to_controller(
+    controller: &layer_surface_visibility::zcosmic_layer_surface_visibility_v1::ZcosmicLayerSurfaceVisibilityV1,
+) {
+    if controller.version() < 6 {
+        log::debug!(
+            "follow_pointer asked for but compositor layer_surface_visibility is v{}",
+            controller.version()
+        );
+        return;
+    }
+    controller.follow_pointer();
+}
+
 /// Apply a show/hide transition preference to a freshly-created visibility
 /// controller.  `set_transition` was added in version 2 of the protocol, so
 /// this is a no-op (logged) when the compositor only supports version 1.
@@ -7435,7 +7450,7 @@ impl<T: 'static> WindowState<T> {
         self.layer_surface_visibility_manager = globals
             .bind::<layer_surface_visibility::zcosmic_layer_surface_visibility_manager_v1::ZcosmicLayerSurfaceVisibilityManagerV1, _, _>(
                 &qh,
-                1..=5,
+                1..=6,
                 layer_surface_visibility::LayerSurfaceVisibilityManagerData,
             )
             .ok();
@@ -8357,6 +8372,7 @@ impl<T: 'static> WindowState<T> {
                                         first_size: _,
                                         start_hidden,
                                         start_hidden_without_animating,
+                                        follow_pointer,
                                     },
                                     id,
                                     info,
@@ -8525,6 +8541,9 @@ impl<T: 'static> WindowState<T> {
                                             };
                                             let controller = manager.get_visibility_controller(&wl_surface, &qh, visibility_data);
                                             apply_transition_to_controller(&controller, transition);
+                                            if follow_pointer {
+                                                apply_follow_pointer_to_controller(&controller);
+                                            }
                                             // A surface that maps hidden and STAYS hidden has
                                             // nothing on screen to animate away, and the
                                             // compositor cannot tell that from an ordinary hide.
@@ -8550,16 +8569,19 @@ impl<T: 'static> WindowState<T> {
                                         } else {
                                             log::warn!("start_hidden: visibility manager not available");
                                         }
-                                    } else if let Some(t) = transition
+                                    } else if (transition.is_some() || follow_pointer)
                                         && let Some(manager) = &window_state.layer_surface_visibility_manager
                                     {
-                                        // The compositor animates the first buffer in, so it needs the role first.
+                                        // The compositor animates the first buffer in and places it, so it needs both first.
                                         let visibility_data = layer_surface_visibility::LayerSurfaceVisibilityData {
                                             surface: wl_surface.clone(),
                                             hidden: false,
                                         };
                                         let controller = manager.get_visibility_controller(&wl_surface, &qh, visibility_data);
-                                        apply_transition_to_controller(&controller, Some(t));
+                                        apply_transition_to_controller(&controller, transition);
+                                        if follow_pointer {
+                                            apply_follow_pointer_to_controller(&controller);
+                                        }
                                         window_state
                                             .layer_surface_visibility_controllers
                                             .insert(wl_surface.id().protocol_id(), controller);

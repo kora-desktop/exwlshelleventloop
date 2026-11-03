@@ -199,6 +199,10 @@ pub struct NewLayerShellSettings {
     /// skipping it loses that. A hover preview created per hover wants the
     /// default; a chat input waiting to be summoned wants this.
     pub start_hidden_without_animating: bool,
+    /// Made without an output: show on the output under the pointer, not on the one keyboard
+    /// focus last moved to. For surfaces that appear on their own, such as notifications.
+    /// Needs `zcosmic_layer_surface_visibility` version 6.
+    pub follow_pointer: bool,
 }
 
 /// be used to create a new popup
@@ -334,6 +338,7 @@ impl Default for NewLayerShellSettings {
             first_size: None,
             start_hidden: false,
             start_hidden_without_animating: false,
+            follow_pointer: false,
         }
     }
 }
