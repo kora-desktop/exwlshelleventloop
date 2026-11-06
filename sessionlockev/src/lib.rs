@@ -458,6 +458,14 @@ impl<T> WindowStateUnit<T> {
             false
         }
     }
+
+    /// Gives back the slot of a frame that failed to present and draws again at `at`,
+    /// whatever redraw was asked for: no frame callback comes for a frame never committed,
+    /// and retrying at once would spin while the failure lasts.
+    pub fn retry_present_at(&mut self, at: Instant) {
+        self.reset_present_slot();
+        self.refresh = RefreshRequest::At(at);
+    }
 }
 impl<T: 'static> WindowStateUnit<T> {
     pub fn request_next_present(&mut self) {
@@ -733,6 +741,12 @@ impl<T: 'static> WindowState<T> {
     pub fn reset_present_slot(&mut self, id: id::Id) {
         self.get_mut_unit_with_id(id)
             .map(WindowStateUnit::reset_present_slot);
+    }
+
+    pub fn retry_present_at(&mut self, id: id::Id, at: Instant) {
+        if let Some(unit) = self.get_mut_unit_with_id(id) {
+            unit.retry_present_at(at);
+        }
     }
     pub fn request_refresh_all(&mut self, request: RefreshRequest) {
         self.units

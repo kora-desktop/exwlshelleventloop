@@ -17,7 +17,10 @@ use super::DefaultStyle;
 use iced_core::theme::Mode;
 use iced_graphics::{Compositor, Shell, compositor};
 
-use iced_core::{Size, time::Instant};
+use iced_core::{
+    Size,
+    time::{Duration, Instant},
+};
 use iced_runtime::{Action, UserInterface, user_interface};
 
 use iced_futures::{Executor, Runtime};
@@ -490,14 +493,22 @@ where
             Ok(()) => {
                 present_span.finish();
             }
-            Err(error) => match error {
-                compositor::SurfaceError::OutOfMemory => {
-                    panic!("{error:?}");
+            Err(error) => {
+                // The frame was dropped. On running out of memory the renderer
+                // freed what it could, so try again shortly; panicking aborted the app.
+                tracing::error!("Error {error:?} when presenting surface.");
+
+                // An outdated or lost surface, or one that failed to configure,
+                // is configured again before the retry draws.
+                if !matches!(
+                    error,
+                    compositor::SurfaceError::OutOfMemory | compositor::SurfaceError::Timeout
+                ) {
+                    self.cached_layer_dimensions.remove(&iced_id);
                 }
-                _ => {
-                    tracing::error!("Error {error:?} when presenting surface.");
-                }
-            },
+
+                ev.retry_present_at(session_lock_id, Instant::now() + Duration::from_millis(100));
+            }
         }
     }
 

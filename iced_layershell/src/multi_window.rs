@@ -1198,14 +1198,22 @@ where
                     crate::event::send_first_frame_event(iced_id);
                 }
             }
-            Err(error) => match error {
-                compositor::SurfaceError::OutOfMemory => {
-                    panic!("{error:?}");
+            Err(error) => {
+                // The frame was dropped. On running out of memory the renderer
+                // freed what it could, so try again shortly; panicking aborted the app.
+                tracing::error!("Error {error:?} when presenting surface.");
+
+                // An outdated or lost surface, or one that failed to configure,
+                // is configured again before the retry draws.
+                if !matches!(
+                    error,
+                    compositor::SurfaceError::OutOfMemory | compositor::SurfaceError::Timeout
+                ) {
+                    self.cached_layer_dimensions.remove(&iced_id);
                 }
-                _ => {
-                    tracing::error!("Error {error:?} when presenting surface.");
-                }
-            },
+
+                ev.retry_present_at(layer_shell_id, Instant::now() + Duration::from_millis(100));
+            }
         }
     }
 
