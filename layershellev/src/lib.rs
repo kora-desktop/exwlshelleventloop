@@ -2760,6 +2760,32 @@ impl<T: 'static> WindowState<T> {
         }
     }
 
+    /// Leave a surface not yet committed out of captures, so it is never in one. Binds the
+    /// manager if startup could not; without compositor support nothing changes.
+    fn exclude_from_capture_now(
+        &mut self,
+        surface: &WlSurface,
+        globals: &GlobalList,
+        qh: &QueueHandle<Self>,
+    ) {
+        if self.capture_exclusion_manager.is_none() {
+            self.capture_exclusion_manager = globals
+                .bind::<capture_exclusion::kora_capture_exclusion_manager_v1::KoraCaptureExclusionManagerV1, _, _>(
+                    qh,
+                    1..=1,
+                    (),
+                )
+                .ok();
+        }
+        let Some(manager) = &self.capture_exclusion_manager else {
+            return;
+        };
+        let exclusion = manager.get_surface_exclusion(surface, qh, ());
+        exclusion.set_excluded(1);
+        self.capture_exclusions
+            .insert(surface.id().protocol_id(), exclusion);
+    }
+
     /// Leave a surface out of screen captures and recordings while it stays on
     /// screen, or put it back in them, from the commit this makes. Requires
     /// compositor support for `kora_capture_exclusion_manager_v1`; without it
@@ -8397,6 +8423,7 @@ impl<T: 'static> WindowState<T> {
                                         start_hidden_without_animating,
                                         follow_pointer,
                                         follow_focus,
+                                        capture_excluded,
                                     },
                                     id,
                                     info,
@@ -8619,6 +8646,11 @@ impl<T: 'static> WindowState<T> {
                                             .insert(wl_surface.id().protocol_id(), controller);
                                     }
 
+                                    // Before the first commit, so no capture ever holds the surface.
+                                    if capture_excluded {
+                                        window_state.exclude_from_capture_now(&wl_surface, &globals, &qh);
+                                    }
+
                                     wl_surface.commit();
 
                                     let mut fractional_scale = None;
@@ -8756,20 +8788,7 @@ impl<T: 'static> WindowState<T> {
 
                                     // Before the first commit, so no capture ever holds the popup.
                                     if capture_excluded {
-                                        if window_state.capture_exclusion_manager.is_none() {
-                                            window_state.capture_exclusion_manager = globals
-                                                .bind::<capture_exclusion::kora_capture_exclusion_manager_v1::KoraCaptureExclusionManagerV1, _, _>(
-                                                    &qh,
-                                                    1..=1,
-                                                    (),
-                                                )
-                                                .ok();
-                                        }
-                                        if let Some(manager) = &window_state.capture_exclusion_manager {
-                                            let exclusion = manager.get_surface_exclusion(&wl_surface, &qh, ());
-                                            exclusion.set_excluded(1);
-                                            window_state.capture_exclusions.insert(surface_id, exclusion);
-                                        }
+                                        window_state.exclude_from_capture_now(&wl_surface, &globals, &qh);
                                     }
 
                                     // Set empty input region so pointer events pass through
