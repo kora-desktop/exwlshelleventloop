@@ -191,8 +191,8 @@ impl From<&DispatchMessage> for WindowEvent {
                     };
                 }
                 WindowEvent::PixelDelta {
-                    x: (-horizontal.absolute * scale) as f32,
-                    y: (-vertical.absolute * scale) as f32,
+                    x: -horizontal.absolute as f32,
+                    y: -vertical.absolute as f32,
                 }
             }
         }

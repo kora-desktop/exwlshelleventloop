@@ -52,8 +52,12 @@ pub fn window_event(
         })),
 
         SessionLockEvent::PixelDelta { x, y } => {
+            let (x, y) = scale_down((f64::from(*x), f64::from(*y)), application_scale_factor);
             Some(IcedEvent::Mouse(mouse::Event::WheelScrolled {
-                delta: mouse::ScrollDelta::Pixels { x: *x, y: *y },
+                delta: mouse::ScrollDelta::Pixels {
+                    x: x as f32,
+                    y: y as f32,
+                },
             }))
         }
         SessionLockEvent::TouchDown { id, x, y } => {
@@ -236,5 +240,51 @@ mod keyboard_tests {
                 other => panic!("expected a keyboard event, got {other:?}"),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod scroll_tests {
+    use super::*;
+    use sessionlockev::DispatchMessage;
+    use sessionlockev::reexport::wayland_client::wl_pointer::AxisSource;
+
+    /// What iced gets for a touchpad swipe of `finger` surface pixels upwards.
+    fn swipe(finger: f64, output_scale: f64, application_scale: f64) -> Option<IcedEvent> {
+        let mut message = DispatchMessage::Axis {
+            time: 0,
+            scale: output_scale,
+            horizontal: Default::default(),
+            vertical: Default::default(),
+            source: Some(AxisSource::Finger),
+        };
+        if let DispatchMessage::Axis { vertical, .. } = &mut message {
+            vertical.absolute = finger;
+        }
+        let event = SessionLockEvent::from(&message);
+        window_event(&event, application_scale, ModifiersState::empty())
+    }
+
+    #[test]
+    fn a_swipe_scrolls_by_the_finger_distance_at_any_output_scale() {
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            assert_eq!(
+                swipe(4.0, scale, 1.0),
+                Some(IcedEvent::Mouse(mouse::Event::WheelScrolled {
+                    delta: mouse::ScrollDelta::Pixels { x: -0.0, y: -4.0 },
+                })),
+                "at output scale {scale}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_swipe_follows_the_application_scale_like_the_cursor() {
+        assert_eq!(
+            swipe(4.0, 1.5, 2.0),
+            Some(IcedEvent::Mouse(mouse::Event::WheelScrolled {
+                delta: mouse::ScrollDelta::Pixels { x: -0.0, y: -2.0 },
+            }))
+        );
     }
 }
