@@ -3879,6 +3879,21 @@ fn apply_follow_pointer_to_controller(
     controller.follow_pointer();
 }
 
+/// Ask to be shown beside the focused window, before the first commit so the first map
+/// honours it. An older compositor keeps the surface on its active output.
+fn apply_follow_focus_to_controller(
+    controller: &layer_surface_visibility::zcosmic_layer_surface_visibility_v1::ZcosmicLayerSurfaceVisibilityV1,
+) {
+    if controller.version() < 7 {
+        log::debug!(
+            "follow_focus asked for but compositor layer_surface_visibility is v{}",
+            controller.version()
+        );
+        return;
+    }
+    controller.follow_focus();
+}
+
 /// Apply a show/hide transition preference to a freshly-created visibility
 /// controller.  `set_transition` was added in version 2 of the protocol, so
 /// this is a no-op (logged) when the compositor only supports version 1.
@@ -7458,7 +7473,7 @@ impl<T: 'static> WindowState<T> {
         self.layer_surface_visibility_manager = globals
             .bind::<layer_surface_visibility::zcosmic_layer_surface_visibility_manager_v1::ZcosmicLayerSurfaceVisibilityManagerV1, _, _>(
                 &qh,
-                1..=6,
+                1..=7,
                 layer_surface_visibility::LayerSurfaceVisibilityManagerData,
             )
             .ok();
@@ -8381,6 +8396,7 @@ impl<T: 'static> WindowState<T> {
                                         start_hidden,
                                         start_hidden_without_animating,
                                         follow_pointer,
+                                        follow_focus,
                                     },
                                     id,
                                     info,
@@ -8395,7 +8411,7 @@ impl<T: 'static> WindowState<T> {
                                             .find(|(n, _)| n == name)
                                             .map(|(_, o)| o.clone()),
                                         // No output, not the focused surface's: the compositor puts it under the pointer.
-                                        _ if follow_pointer => None,
+                                        _ if follow_pointer || follow_focus => None,
                                         _ => {
                                             let pos = window_state.surface_pos();
 
@@ -8554,6 +8570,9 @@ impl<T: 'static> WindowState<T> {
                                             if follow_pointer {
                                                 apply_follow_pointer_to_controller(&controller);
                                             }
+                                            if follow_focus {
+                                                apply_follow_focus_to_controller(&controller);
+                                            }
                                             // A surface that maps hidden and STAYS hidden has
                                             // nothing on screen to animate away, and the
                                             // compositor cannot tell that from an ordinary hide.
@@ -8579,7 +8598,7 @@ impl<T: 'static> WindowState<T> {
                                         } else {
                                             log::warn!("start_hidden: visibility manager not available");
                                         }
-                                    } else if (transition.is_some() || follow_pointer)
+                                    } else if (transition.is_some() || follow_pointer || follow_focus)
                                         && let Some(manager) = &window_state.layer_surface_visibility_manager
                                     {
                                         // The compositor animates the first buffer in and places it, so it needs both first.
@@ -8591,6 +8610,9 @@ impl<T: 'static> WindowState<T> {
                                         apply_transition_to_controller(&controller, transition);
                                         if follow_pointer {
                                             apply_follow_pointer_to_controller(&controller);
+                                        }
+                                        if follow_focus {
+                                            apply_follow_focus_to_controller(&controller);
                                         }
                                         window_state
                                             .layer_surface_visibility_controllers

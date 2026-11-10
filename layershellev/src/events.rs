@@ -204,6 +204,11 @@ pub struct NewLayerShellSettings {
     /// not where keyboard focus last went. For surfaces that appear on their own, such as
     /// notifications. Placing it needs `zcosmic_layer_surface_visibility` version 6.
     pub follow_pointer: bool,
+    /// With `OutputOption::None`, make the surface with no output and have the compositor
+    /// show it on the output of the window with keyboard focus each time. For surfaces about
+    /// what the person is typing into, such as dictation feedback. Placing it needs
+    /// `zcosmic_layer_surface_visibility` version 7.
+    pub follow_focus: bool,
 }
 
 /// be used to create a new popup
@@ -340,6 +345,7 @@ impl Default for NewLayerShellSettings {
             start_hidden: false,
             start_hidden_without_animating: false,
             follow_pointer: false,
+            follow_focus: false,
         }
     }
 }
