@@ -287,4 +287,28 @@ mod scroll_tests {
             }))
         );
     }
+
+    #[test]
+    fn a_wheel_notch_is_one_line_at_any_output_scale() {
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            let mut message = DispatchMessage::Axis {
+                time: 0,
+                scale,
+                horizontal: Default::default(),
+                vertical: Default::default(),
+                source: Some(AxisSource::Wheel),
+            };
+            if let DispatchMessage::Axis { vertical, .. } = &mut message {
+                vertical.discrete = 1;
+            }
+            let event = SessionLockEvent::from(&message);
+            assert_eq!(
+                window_event(&event, 1.0, ModifiersState::empty()),
+                Some(IcedEvent::Mouse(mouse::Event::WheelScrolled {
+                    delta: mouse::ScrollDelta::Lines { x: -0.0, y: -1.0 },
+                })),
+                "at output scale {scale}"
+            );
+        }
+    }
 }

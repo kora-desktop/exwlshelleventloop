@@ -177,7 +177,6 @@ impl From<&DispatchMessage> for WindowEvent {
             DispatchMessage::Axis {
                 horizontal,
                 vertical,
-                scale,
                 ..
             } => {
                 if horizontal.stop && vertical.stop {
@@ -186,8 +185,8 @@ impl From<&DispatchMessage> for WindowEvent {
                 let has_scroll = vertical.discrete != 0 || horizontal.discrete != 0;
                 if has_scroll {
                     return WindowEvent::Axis {
-                        x: (-horizontal.discrete as f64 * scale) as f32,
-                        y: (-vertical.discrete as f64 * scale) as f32,
+                        x: -horizontal.discrete as f32,
+                        y: -vertical.discrete as f32,
                     };
                 }
                 WindowEvent::PixelDelta {
