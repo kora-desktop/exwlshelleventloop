@@ -1030,14 +1030,13 @@ impl From<&DispatchMessage> for WindowEvent {
             DispatchMessage::Axis {
                 horizontal,
                 vertical,
-                scale,
                 source,
                 ..
             } => {
                 use layershellev::reexport::wayland_client::wl_pointer::AxisSource;
                 // Classify by the axis *source*, not by per-frame `discrete`
                 // presence: a wheel is a discrete device (→ logical lines, which
-                // apps animate smoothly), a touchpad is continuous (→ physical
+                // apps animate smoothly), a touchpad is continuous (→ logical
                 // pixel deltas). The compositor can drop `axis_discrete` on some
                 // wheel notches (e.g. under a reduced scroll-speed setting), so
                 // keying on it per-frame makes wheel scrolling flip between lines
@@ -1049,10 +1048,10 @@ impl From<&DispatchMessage> for WindowEvent {
                 if horizontal.stop && vertical.stop {
                     WindowEvent::ScrollStop
                 } else if is_touchpad {
-                    // Physical pixel deltas — scale to physical pixels.
+                    // Surface (logical) pixels, as the cursor position is.
                     WindowEvent::PixelDelta {
-                        x: (-horizontal.absolute * scale) as f32,
-                        y: (-vertical.absolute * scale) as f32,
+                        x: -horizontal.absolute as f32,
+                        y: -vertical.absolute as f32,
                     }
                 } else {
                     // Wheel (or unknown source): logical "lines", scale-independent
