@@ -178,6 +178,16 @@ pub trait ForeignToplevelHandler {
     #[cfg(feature = "cosmic-toplevel")]
     fn get_cosmic_toplevel_handle(&self, id: u32) -> Option<&ZcosmicToplevelHandleV1>;
 
+    /// A desktop's handle and an output its group is on: what a move names.
+    #[cfg(all(feature = "cosmic-toplevel", feature = "workspaces"))]
+    fn desktop_target(
+        &self,
+        desktop: u32,
+    ) -> Option<(
+        &wayland_protocols::ext::workspace::v1::client::ext_workspace_handle_v1::ExtWorkspaceHandleV1,
+        &wayland_client::protocol::wl_output::WlOutput,
+    )>;
+
     /// Get the COSMIC toplevel manager (for control operations)
     #[cfg(feature = "cosmic-toplevel")]
     fn get_cosmic_toplevel_manager(&self) -> Option<&ZcosmicToplevelManagerV1>;
@@ -210,6 +220,10 @@ pub enum ToplevelAction {
     SetFullscreen(u32),
     /// Unset fullscreen
     UnsetFullscreen(u32),
+    /// Move the window to a desktop, named by its `ext_workspace_handle_v1` id, on an
+    /// output that desktop's group is on. Needs zcosmic_toplevel_manager_v1 v4+.
+    #[cfg(all(feature = "cosmic-toplevel", feature = "workspaces"))]
+    MoveToDesktop { toplevel: u32, desktop: u32 },
 }
 
 /// Blanket implementation for foreign toplevel manager dispatch
@@ -716,9 +730,17 @@ pub fn execute_toplevel_action<D: ForeignToplevelHandler>(
         ToplevelAction::UnsetMinimized(id) => *id,
         ToplevelAction::SetFullscreen(id) => *id,
         ToplevelAction::UnsetFullscreen(id) => *id,
+        #[cfg(all(feature = "cosmic-toplevel", feature = "workspaces"))]
+        ToplevelAction::MoveToDesktop { toplevel, .. } => *toplevel,
     };
 
     log::info!("execute_toplevel_action: action={:?}, id={}", action, id);
+
+    // The wlr protocol has no desktops, so a move has no fallback.
+    #[cfg(all(feature = "cosmic-toplevel", feature = "workspaces"))]
+    if let ToplevelAction::MoveToDesktop { toplevel, desktop } = action {
+        return move_to_desktop(state, toplevel, desktop);
+    }
 
     // Try COSMIC toplevel manager first (if available)
     #[cfg(feature = "cosmic-toplevel")]
@@ -741,6 +763,34 @@ pub fn execute_toplevel_action<D: ForeignToplevelHandler>(
 
     log::info!("Found wlr toplevel handle for id {}", id);
     execute_wlr_action(handle, action, seat)
+}
+
+/// Ask the compositor to move `toplevel` to `desktop`. False when the compositor
+/// cannot, or when the window or the desktop is gone or not on an output.
+#[cfg(all(feature = "cosmic-toplevel", feature = "workspaces"))]
+fn move_to_desktop<D: ForeignToplevelHandler>(state: &D, toplevel: u32, desktop: u32) -> bool {
+    use wayland_client::Proxy;
+    let Some(manager) = state.get_cosmic_toplevel_manager() else {
+        log::warn!("Move to desktop dropped: zcosmic_toplevel_manager_v1 not bound");
+        return false;
+    };
+    if manager.version() < 4 {
+        log::warn!(
+            "Move to desktop dropped: zcosmic_toplevel_manager_v1 v{}, need v4+",
+            manager.version()
+        );
+        return false;
+    }
+    let Some(handle) = state.get_cosmic_toplevel_handle(toplevel) else {
+        log::warn!("Move to desktop dropped: no COSMIC handle for toplevel {toplevel}");
+        return false;
+    };
+    let Some((workspace, output)) = state.desktop_target(desktop) else {
+        log::warn!("Move to desktop dropped: desktop {desktop} is gone or not on an output");
+        return false;
+    };
+    manager.move_to_ext_workspace(handle, workspace, output);
+    true
 }
 
 /// Execute action using COSMIC toplevel manager
@@ -807,6 +857,9 @@ fn execute_cosmic_action(
             log::info!("COSMIC: Unsetting fullscreen");
             manager.unset_fullscreen(handle);
         }
+        // Sent by `move_to_desktop`, which needs the desktop's handle and output.
+        #[cfg(feature = "workspaces")]
+        ToplevelAction::MoveToDesktop { .. } => return false,
     }
     true
 }
@@ -853,6 +906,11 @@ fn execute_wlr_action(
         }
         ToplevelAction::UnsetFullscreen(_) => {
             handle.unset_fullscreen();
+        }
+        #[cfg(all(feature = "cosmic-toplevel", feature = "workspaces"))]
+        ToplevelAction::MoveToDesktop { .. } => {
+            log::warn!("wlr protocol has no desktops; move dropped");
+            return false;
         }
     }
 

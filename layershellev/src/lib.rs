@@ -219,8 +219,11 @@ use wayland_protocols::{
     },
 };
 
-// For `ScreencopyHandler::get_ext_workspace_handle`.
-#[cfg(all(feature = "screencopy", feature = "workspaces"))]
+// For `ScreencopyHandler::get_ext_workspace_handle` and `ForeignToplevelHandler::desktop_target`.
+#[cfg(all(
+    feature = "workspaces",
+    any(feature = "screencopy", feature = "cosmic-toplevel")
+))]
 use wayland_protocols::ext::workspace::v1::client::ext_workspace_handle_v1::ExtWorkspaceHandleV1;
 
 use wayland_protocols::wp::input_method::zv1::client::{
@@ -6795,6 +6798,14 @@ impl<T: 'static> foreign_toplevel::ForeignToplevelHandler for WindowState<T> {
     #[cfg(feature = "cosmic-toplevel")]
     fn get_cosmic_toplevel_manager(&self) -> Option<&cosmic_protocols::toplevel_management::v1::client::zcosmic_toplevel_manager_v1::ZcosmicToplevelManagerV1>{
         self.cosmic_toplevel_manager.as_ref()
+    }
+
+    #[cfg(all(feature = "cosmic-toplevel", feature = "workspaces"))]
+    fn desktop_target(
+        &self,
+        desktop: u32,
+    ) -> Option<(&ExtWorkspaceHandleV1, &wl_output::WlOutput)> {
+        self.workspaces.move_target(desktop)
     }
 
     #[cfg(feature = "cosmic-toplevel")]
