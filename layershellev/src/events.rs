@@ -209,6 +209,9 @@ pub struct NewLayerShellSettings {
     /// what the person is typing into, such as dictation feedback. Placing it needs
     /// `zcosmic_layer_surface_visibility` version 7.
     pub follow_focus: bool,
+    /// Leave the surface out of screen captures and recordings from its first frame, while
+    /// it stays on screen. Needs compositor support for `kora_capture_exclusion_manager_v1`.
+    pub capture_excluded: bool,
 }
 
 /// be used to create a new popup
@@ -346,6 +349,7 @@ impl Default for NewLayerShellSettings {
             start_hidden_without_animating: false,
             follow_pointer: false,
             follow_focus: false,
+            capture_excluded: false,
         }
     }
 }
