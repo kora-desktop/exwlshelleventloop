@@ -3213,13 +3213,20 @@ impl<T: 'static> WindowState<T> {
     }
 
     /// Whether the next pass must run now. A surface or exit asked for by a user
-    /// event waits in `return_data`, and only a pass makes it.
+    /// event waits in `return_data`, and only a pass makes it. A surface asked to
+    /// close between passes (by a task's message) is closed only by a pass too.
     fn pass_due_now(&self, woke_by_events: bool) -> bool {
         let queued = !self.message.is_empty() && self.retry_timer.is_none();
         let faded = self
             .next_fade_close()
             .is_some_and(|at| at <= Instant::now());
-        woke_by_events || queued || faded || !self.return_data.is_empty() || self.has_due_frame()
+        let closing = self.units.iter().any(|unit| unit.request_flag.close);
+        woke_by_events
+            || queued
+            || faded
+            || closing
+            || !self.return_data.is_empty()
+            || self.has_due_frame()
     }
 
     /// The earliest timed redraw still to come.
