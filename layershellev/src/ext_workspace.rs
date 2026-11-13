@@ -148,6 +148,14 @@ impl WorkspacesState {
     pub fn handle(&self, id: u32) -> Option<&ExtWorkspaceHandleV1> {
         self.handles.get(&id).map(|(handle, _)| handle)
     }
+
+    /// A desktop's handle and the first output its group is on, which is what a
+    /// window move names. None while the desktop has no group or the group no output.
+    pub fn move_target(&self, id: u32) -> Option<(&ExtWorkspaceHandleV1, &WlOutput)> {
+        let (handle, info) = self.handles.get(&id)?;
+        let output = self.outputs.get(&info.group?)?.first()?;
+        Some((handle, output))
+    }
 }
 
 impl<T> WindowState<T> {
@@ -498,5 +506,201 @@ mod tests {
             },
         ])));
         assert!(state.queue(WorkspaceAction::Batch(Vec::new())));
+    }
+
+    /// A group on `outputs`, holding one desktop; returns the desktop's id.
+    fn desktop_on(
+        state: &mut WorkspacesState,
+        connection: &Connection,
+        group: u32,
+        desktop: u32,
+        outputs: Vec<WlOutput>,
+    ) -> u32 {
+        let backend = connection.backend().downgrade();
+        state.groups.insert(
+            group,
+            (
+                ExtWorkspaceGroupHandleV1::inert(backend.clone()),
+                WorkspaceGroupInfo {
+                    id: group,
+                    realm: None,
+                    on_screen: !outputs.is_empty(),
+                    outputs: Vec::new(),
+                    can_create: false,
+                },
+            ),
+        );
+        state.outputs.insert(group, outputs);
+        state.handles.insert(
+            desktop,
+            (
+                ExtWorkspaceHandleV1::inert(backend),
+                WorkspaceInfo {
+                    id: desktop,
+                    group: Some(group),
+                    name: String::new(),
+                    ext_id: None,
+                    coordinates: Vec::new(),
+                    active: false,
+                    urgent: false,
+                    hidden: false,
+                    can_activate: true,
+                    can_remove: false,
+                },
+            ),
+        );
+        desktop
+    }
+
+    #[test]
+    fn a_move_names_the_desktop_and_the_first_output_its_group_is_on() {
+        let (socket, _peer) = UnixStream::pair().unwrap();
+        let connection = Connection::from_socket(socket).unwrap();
+        let queue = connection.new_event_queue::<WindowState<()>>();
+        let qh = queue.handle();
+        let registry = connection.display().get_registry(&qh, ());
+        let external = registry.bind::<WlOutput, _, _>(1, 4, &qh, ());
+        let built_in = registry.bind::<WlOutput, _, _>(2, 4, &qh, ());
+        let mut state = WorkspacesState::default();
+
+        let shown = desktop_on(
+            &mut state,
+            &connection,
+            1,
+            10,
+            vec![external.clone(), built_in],
+        );
+        let (_, output) = state.move_target(shown).unwrap();
+        assert_eq!(*output, external);
+
+        // A desktop of a workspace that is not on screen has nowhere to go.
+        let hidden = desktop_on(&mut state, &connection, 2, 20, Vec::new());
+        assert!(state.move_target(hidden).is_none());
+        state.handles.get_mut(&shown).unwrap().1.group = None;
+        assert!(state.move_target(shown).is_none());
+        assert!(state.move_target(99).is_none());
+    }
+
+    #[cfg(feature = "cosmic-toplevel")]
+    #[test]
+    fn a_window_moves_to_a_desktop_only_when_the_compositor_can_say_where() {
+        use crate::foreign_toplevel::{
+            CosmicToplevelManagerData, ToplevelAction, execute_toplevel_action,
+        };
+        use cosmic_protocols::toplevel_info::v1::client::zcosmic_toplevel_handle_v1::ZcosmicToplevelHandleV1;
+        use cosmic_protocols::toplevel_management::v1::client::zcosmic_toplevel_manager_v1::ZcosmicToplevelManagerV1;
+        use std::io::Read;
+
+        let (socket, mut peer) = UnixStream::pair().unwrap();
+        peer.set_nonblocking(true).unwrap();
+        let connection = Connection::from_socket(socket).unwrap();
+        let queue = connection.new_event_queue::<WindowState<()>>();
+        let qh = queue.handle();
+        let registry = connection.display().get_registry(&qh, ());
+        let output = registry.bind::<WlOutput, _, _>(1, 4, &qh, ());
+        let mut state = WindowState::<()>::new("move-to-desktop-test");
+        let move_it = ToplevelAction::MoveToDesktop {
+            toplevel: 5,
+            desktop: 10,
+        };
+        // The requests the client sent since the last call: (sender, opcode, args).
+        let mut sent = || {
+            connection.flush().unwrap();
+            let mut bytes = Vec::new();
+            let mut chunk = [0u8; 4096];
+            while let Ok(n) = peer.read(&mut chunk) {
+                if n == 0 {
+                    break;
+                }
+                bytes.extend_from_slice(&chunk[..n]);
+            }
+            let words: Vec<u32> = bytes
+                .chunks_exact(4)
+                .map(|w| u32::from_ne_bytes(w.try_into().unwrap()))
+                .collect();
+            let mut messages = Vec::new();
+            let mut at = 0;
+            while at + 2 <= words.len() {
+                let len = (words[at + 1] >> 16) as usize / 4;
+                messages.push((
+                    words[at],
+                    words[at + 1] & 0xffff,
+                    words[at + 2..at + len].to_vec(),
+                ));
+                at += len;
+            }
+            messages
+        };
+        sent();
+
+        assert!(
+            !execute_toplevel_action(&state, move_it.clone(), None),
+            "no manager"
+        );
+
+        state.cosmic_toplevel_manager = Some(registry.bind::<ZcosmicToplevelManagerV1, _, _>(
+            2,
+            3,
+            &qh,
+            CosmicToplevelManagerData,
+        ));
+        // Bound by hand so the requests carry live objects; a compositor sends these.
+        let toplevel = registry.bind::<ZcosmicToplevelHandleV1, _, _>(
+            3,
+            1,
+            &qh,
+            crate::foreign_toplevel::CosmicToplevelHandleData { ext_handle_id: 5 },
+        );
+        let desktop = registry.bind::<ExtWorkspaceHandleV1, _, _>(4, 1, &qh, WorkspaceHandleData);
+        state.cosmic_toplevel_handles.insert(5, toplevel.clone());
+        desktop_on(
+            &mut state.workspaces,
+            &connection,
+            1,
+            10,
+            vec![output.clone()],
+        );
+        state.workspaces.handles.get_mut(&10).unwrap().0 = desktop.clone();
+        sent();
+        assert!(
+            !execute_toplevel_action(&state, move_it.clone(), None),
+            "v3 has no move"
+        );
+        assert!(sent().is_empty());
+
+        let manager =
+            registry.bind::<ZcosmicToplevelManagerV1, _, _>(2, 4, &qh, CosmicToplevelManagerData);
+        let manager_id = manager.id().protocol_id();
+        state.cosmic_toplevel_manager = Some(manager);
+        sent();
+        assert!(!execute_toplevel_action(
+            &state,
+            ToplevelAction::MoveToDesktop {
+                toplevel: 6,
+                desktop: 10
+            },
+            None
+        ));
+        assert!(!execute_toplevel_action(
+            &state,
+            ToplevelAction::MoveToDesktop {
+                toplevel: 5,
+                desktop: 11
+            },
+            None
+        ));
+        assert!(
+            sent().is_empty(),
+            "nothing is sent for a window or desktop that is gone"
+        );
+
+        assert!(execute_toplevel_action(&state, move_it, None));
+        // move_to_ext_workspace is request 13: toplevel, workspace, then the output.
+        let moves = sent();
+        assert_eq!(moves.len(), 1);
+        let (sender, opcode, args) = &moves[0];
+        assert_eq!((*sender, *opcode), (manager_id, 13));
+        let ids = [toplevel.id(), desktop.id(), output.id()].map(|id| id.protocol_id());
+        assert_eq!(args[..], ids);
     }
 }
