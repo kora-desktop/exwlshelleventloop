@@ -160,3 +160,18 @@ fn a_popup_closes_at_once_where_it_cannot_fade() {
     unit(&mut state, popup).configured = true;
     assert!(!state.fade_out_popup(popup, Duration::from_millis(150)));
 }
+
+/// A surface closed by a task's message (a toolbar that faded out, say) is closed between
+/// passes, and a hidden one brings no Wayland event to wake the loop, so the pass that
+/// closes it runs at once.
+#[test]
+fn a_surface_asked_to_close_between_passes_runs_the_next_pass_at_once() {
+    let Fixture {
+        mut state, parent, ..
+    } = fixture(false);
+    // Opening the surfaces queued their focus news; once a pass took it, the app sleeps.
+    state.message.clear();
+    assert!(!state.pass_due_now(false), "an idle app sleeps");
+    unit(&mut state, parent).request_close();
+    assert!(state.pass_due_now(false), "the close runs now");
+}
