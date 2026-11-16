@@ -14,6 +14,10 @@ pub enum Error {
     /// The application graphics context could not be created.
     #[error("the application graphics context could not be created")]
     GraphicsCreationFailed(iced_graphics::Error),
+
+    /// The event loop stopped, for one because the Wayland connection was lost.
+    #[error("the event loop stopped: {0}")]
+    EventLoopFailed(layershellev::LayerEventError),
 }
 
 impl From<iced_graphics::Error> for Error {

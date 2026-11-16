@@ -191,6 +191,8 @@ pub enum SessionLockEventError {
     EventLoopInitError(#[from] CallLoopError),
     #[error("roundtrip Error")]
     RoundTripError(#[from] WaylandError),
+    #[error("the Wayland connection was lost: {0}")]
+    ConnectionLost(WaylandError),
 }
 
 /// reexport the wayland objects which are needed
@@ -1652,8 +1654,22 @@ impl<T: 'static> WindowState<T> {
             EventLoop::try_new().expect("Failed to initialize the event loop");
 
         let event_queue = connection.new_event_queue::<EventWrapper<Self, F>>();
-        WaylandSource::new(connection.clone(), event_queue)
-            .insert(event_loop.handle())
+        let source_connection = connection.clone();
+        let lost_connection = connection.clone();
+        event_loop
+            .handle()
+            .insert_source(
+                WaylandSource::new(connection.clone(), event_queue),
+                move |_, queue, data| {
+                    let dispatched = queue.dispatch_pending(data)?;
+                    // Neither wayland-client nor the source stops on a protocol error, and the
+                    // closed socket then stays readable: end the loop instead of spinning on it.
+                    match source_connection.backend().last_error() {
+                        Some(error) => Err(DispatchError::Backend(error)),
+                        None => Ok(dispatched),
+                    }
+                },
+            )
             .expect("Failed to init Wayland Source");
         let mut state = EventWrapper {
             raw: self,
@@ -1944,7 +1960,10 @@ impl<T: 'static> WindowState<T> {
                         .ok();
                 }
             })
-            .map_err(SessionLockEventError::EventLoopInitError)?;
+            .map_err(|error| match lost_connection.backend().last_error() {
+                Some(lost) => SessionLockEventError::ConnectionLost(lost),
+                None => SessionLockEventError::EventLoopInitError(error),
+            })?;
         Ok(())
     }
 }

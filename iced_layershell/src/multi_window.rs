@@ -216,7 +216,7 @@ where
     let mut waiting_layer_shell_events = VecDeque::new();
     let mut task_context = task::Context::from_waker(task::noop_waker_ref());
 
-    let _ = ev.running_with_proxy(message_receiver, move |event, ev, layer_shell_id| {
+    ev.running_with_proxy(message_receiver, move |event, ev, layer_shell_id| {
         let mut def_returndata = ReturnData::None;
         match event {
             LayerShellEvent::InitRequest => {
@@ -320,8 +320,8 @@ where
             }
         }
         def_returndata
-    });
-    Ok(())
+    })
+    .map_err(Error::EventLoopFailed)
 }
 
 enum ContextState<Context> {
