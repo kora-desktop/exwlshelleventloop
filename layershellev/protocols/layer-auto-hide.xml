@@ -88,6 +88,9 @@
         Specifies which output edge the surface slides toward when hidden.
       </description>
       <entry name="bottom" value="0" summary="slide off the bottom edge"/>
+      <entry name="top" value="1" summary="slide off the top edge"/>
+      <entry name="left" value="2" summary="slide off the left edge"/>
+      <entry name="right" value="3" summary="slide off the right edge"/>
     </enum>
 
     <enum name="mode">

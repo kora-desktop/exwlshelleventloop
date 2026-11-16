@@ -35,3 +35,22 @@ mod generated {
 pub struct LayerAutoHideData {
     pub surface: WlSurface,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::layer_auto_hide_v1::Edge;
+
+    #[test]
+    fn every_edge_reaches_the_compositor_as_itself() {
+        // An edge missing from the protocol fell back to the bottom one, so a bar
+        // on the top or a side hid toward, and was revealed from, the bottom.
+        for (value, edge) in [
+            (0, Edge::Bottom),
+            (1, Edge::Top),
+            (2, Edge::Left),
+            (3, Edge::Right),
+        ] {
+            assert_eq!(Edge::try_from(value), Ok(edge));
+        }
+    }
+}

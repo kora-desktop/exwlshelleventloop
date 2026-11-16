@@ -2894,7 +2894,7 @@ impl<T: 'static> WindowState<T> {
 
     /// Enable compositor-driven auto-hide for a specific surface.
     /// The compositor will animate hide/show transitions and handle hover detection.
-    /// `edge`: which edge to slide off (0 = bottom)
+    /// `edge`: which edge to slide off (0 = bottom, 1 = top, 2 = left, 3 = right)
     /// `edge_zone`: hover detection zone in pixels at the screen edge
     /// `mode`: 0 = always, 1 = maximized/fullscreen, 2 = fullscreen only (protocol v2)
     pub fn set_auto_hide_for_surface(
