@@ -136,6 +136,10 @@ where
         .with_blur_border(settings.layer_settings.blur_border)
         .with_shadow(settings.layer_settings.shadow)
         .with_transition(settings.layer_settings.transition)
+        .with_start_hidden(
+            settings.layer_settings.start_hidden,
+            settings.layer_settings.start_hidden_without_animating,
+        )
         .with_special_action(
             settings.layer_settings.special_action,
             settings.layer_settings.special_action_default,

@@ -116,6 +116,16 @@ pub struct LayerShellSettings {
     /// dock — the only surface that should). Requires
     /// `zcosmic_layer_surface_visibility` version 2.
     pub transition: Option<LayerTransition>,
+    /// Map the surface hidden until `ShowWindow`, so its first show plays the
+    /// compositor's open animation as every later one does. A surface mapped
+    /// visible has no hidden state to open from. Requires
+    /// `zcosmic_layer_surface_visibility`.
+    pub start_hidden: bool,
+    /// Skip the hide animation of that initial hide. For a surface that maps
+    /// hidden and stays hidden until summoned; see
+    /// [`layershellev::NewLayerShellSettings::start_hidden_without_animating`].
+    /// Honoured from `zcosmic_layer_surface_visibility` v4.
+    pub start_hidden_without_animating: bool,
     /// Enable foreign toplevel tracking - receive events for all opened windows on the system
     /// (requires compositor support for zwlr_foreign_toplevel_manager_v1)
     /// This field is only available when the `foreign-toplevel` feature is enabled.
@@ -153,6 +163,8 @@ impl Default for LayerShellSettings {
             shadow: false,
             corner_radius: None,
             transition: None,
+            start_hidden: false,
+            start_hidden_without_animating: false,
             #[cfg(feature = "foreign-toplevel")]
             foreign_toplevel: false,
             auto_size: false,
@@ -243,6 +255,8 @@ mod tests {
             shadow: false,
             corner_radius: None,
             transition: None,
+            start_hidden: false,
+            start_hidden_without_animating: false,
             auto_size: false,
             special_action: false,
             special_action_default: false,

@@ -1406,6 +1406,9 @@ pub struct WindowState<T> {
     /// [`NewLayerShellSettings::transition`].  Takes precedence over `transition`
     /// for that surface.  See [`WindowState::surface_transition`].
     transitions: HashMap<u32, LayerTransition>,
+    /// How the surfaces made at startup start hidden, if they do. See
+    /// [`WindowState::with_start_hidden`].
+    start_hidden: Option<HiddenStart>,
 
     /// Auto-hide manager (bound lazily when needed)
     auto_hide_manager:
@@ -3405,6 +3408,65 @@ impl<T: 'static> WindowState<T> {
         }
     }
 
+    /// Hide a surface that has not committed yet, so the compositor maps it hidden. Its first
+    /// show is then a show like any other, and the compositor plays the open animation.
+    ///
+    /// The controller is made from `qh` because at daemon boot `self.units` may be empty.
+    fn hide_before_first_commit(
+        &mut self,
+        surface: &WlSurface,
+        qh: &QueueHandle<Self>,
+        start: HiddenStart,
+    ) {
+        let surface_id = surface.id().protocol_id();
+        self.hidden_surfaces.insert(surface_id);
+        let transition = self.surface_transition(surface_id);
+        let Some(manager) = &self.layer_surface_visibility_manager else {
+            log::warn!("start_hidden: visibility manager not available");
+            return;
+        };
+        let visibility_data = layer_surface_visibility::LayerSurfaceVisibilityData {
+            surface: surface.clone(),
+            hidden: true,
+        };
+        let controller = manager.get_visibility_controller(surface, qh, visibility_data);
+        apply_transition_to_controller(&controller, transition);
+        if start.follow_pointer {
+            apply_follow_pointer_to_controller(&controller);
+        }
+        if start.follow_focus {
+            apply_follow_focus_to_controller(&controller);
+        }
+        // The compositor cannot tell a surface that maps hidden and stays hidden from an
+        // ordinary hide, so skipping the hide animation is opt-in: a surface shown a moment
+        // later wants that animation still in flight to open from.
+        if start.without_animating && controller.version() >= 4 {
+            controller.set_hidden_immediately();
+        } else {
+            if start.without_animating {
+                log::debug!(
+                    "start_hidden_without_animating asked for but compositor layer_surface_visibility is v{}; falling back to an animated hide",
+                    controller.version()
+                );
+            }
+            controller.set_hidden();
+        }
+        self.layer_surface_visibility_controllers
+            .insert(surface_id, controller);
+        if let Some(ref conn) = self.connection {
+            let _ = conn.flush();
+        }
+        log::debug!("start_hidden: created controller and hid surface {surface_id}");
+    }
+
+    /// The first commit of a surface made at startup, hidden first when the app asked.
+    fn commit_startup_surface(&mut self, surface: &WlSurface, qh: &QueueHandle<Self>) {
+        if let Some(start) = self.start_hidden {
+            self.hide_before_first_commit(surface, qh, start);
+        }
+        surface.commit();
+    }
+
     /// Show a surface that was previously hidden
     pub fn show_surface(&mut self, surface: &WlSurface) {
         let surface_id = surface.id().protocol_id();
@@ -3930,6 +3992,14 @@ fn apply_follow_focus_to_controller(
     controller.follow_focus();
 }
 
+/// How a surface that maps hidden asked to be hidden.
+#[derive(Debug, Clone, Copy)]
+struct HiddenStart {
+    without_animating: bool,
+    follow_pointer: bool,
+    follow_focus: bool,
+}
+
 /// Apply a show/hide transition preference to a freshly-created visibility
 /// controller.  `set_transition` was added in version 2 of the protocol, so
 /// this is a no-op (logged) when the compositor only supports version 1.
@@ -4064,6 +4134,20 @@ impl<T> WindowState<T> {
     /// per-surface [`NewLayerShellSettings::transition`] overrides this.
     pub fn with_transition(mut self, transition: Option<LayerTransition>) -> Self {
         self.transition = transition;
+        self
+    }
+
+    /// Map the surfaces made at startup hidden, as [`NewLayerShellSettings::start_hidden`]
+    /// does for a surface made later. A daemon that shows its surface on demand wants this:
+    /// a surface mapped visible has no hidden state to open from, so its first show plays
+    /// no open animation. `without_animating` is
+    /// [`NewLayerShellSettings::start_hidden_without_animating`].
+    pub fn with_start_hidden(mut self, hidden: bool, without_animating: bool) -> Self {
+        self.start_hidden = hidden.then_some(HiddenStart {
+            without_animating,
+            follow_pointer: false,
+            follow_focus: false,
+        });
         self
     }
 
@@ -4320,6 +4404,7 @@ impl<T> Default for WindowState<T> {
             keyboard_shortcuts_inhibitors: HashMap::new(),
             transition: None,
             transitions: HashMap::new(),
+            start_hidden: None,
             auto_hide_manager: None,
             auto_hide_surfaces: HashMap::new(),
             auto_hide_visible: true,
@@ -7873,7 +7958,7 @@ impl<T: 'static> WindowState<T> {
                 self.usable_area_surfaces.insert(surface_id, obj);
             }
 
-            wl_surface.commit();
+            self.commit_startup_surface(&wl_surface, &qh);
 
             let mut fractional_scale = None;
             if let Some(ref fractional_scale_manager) = fractional_scale_manager {
@@ -7949,7 +8034,7 @@ impl<T: 'static> WindowState<T> {
                 // (shared with the runtime NewDisplay path).
                 self.apply_surface_effects(&wl_surface, &qh);
 
-                wl_surface.commit();
+                self.commit_startup_surface(&wl_surface, &qh);
 
                 let zxdgoutput = xdg_output_manager.get_xdg_output(output_display, &qh, ());
                 let mut fractional_scale = None;
@@ -8593,56 +8678,17 @@ impl<T: 'static> WindowState<T> {
                                             .insert(wl_surface.id().protocol_id(), t);
                                     }
 
-                                    // If start_hidden is requested, create a visibility
-                                    // controller and set hidden BEFORE the first commit so
-                                    // the compositor already knows the surface is hidden
-                                    // when it processes the initial buffer.
-                                    //
-                                    // We create the controller directly here instead of
-                                    // going through hide_surface() because at daemon boot
-                                    // self.units may be empty (no QueueHandle available).
+                                    // Hidden before the first commit, so the compositor maps it hidden.
                                     if start_hidden {
-                                        let surface_id = wl_surface.id().protocol_id();
-                                        window_state.hidden_surfaces.insert(surface_id);
-                                        let transition = window_state.surface_transition(surface_id);
-                                        if let Some(manager) = &window_state.layer_surface_visibility_manager {
-                                            let visibility_data = layer_surface_visibility::LayerSurfaceVisibilityData {
-                                                surface: wl_surface.clone(),
-                                                hidden: true,
-                                            };
-                                            let controller = manager.get_visibility_controller(&wl_surface, &qh, visibility_data);
-                                            apply_transition_to_controller(&controller, transition);
-                                            if follow_pointer {
-                                                apply_follow_pointer_to_controller(&controller);
-                                            }
-                                            if follow_focus {
-                                                apply_follow_focus_to_controller(&controller);
-                                            }
-                                            // A surface that maps hidden and STAYS hidden has
-                                            // nothing on screen to animate away, and the
-                                            // compositor cannot tell that from an ordinary hide.
-                                            // Saying so costs it the hide animation, which is
-                                            // why it is opt-in: a surface shown a moment later
-                                            // wants that animation still in flight.
-                                            if start_hidden_without_animating && controller.version() >= 4 {
-                                                controller.set_hidden_immediately();
-                                            } else {
-                                                if start_hidden_without_animating {
-                                                    log::debug!(
-                                                        "start_hidden_without_animating asked for but compositor layer_surface_visibility is v{}; falling back to an animated hide",
-                                                        controller.version()
-                                                    );
-                                                }
-                                                controller.set_hidden();
-                                            }
-                                            window_state.layer_surface_visibility_controllers.insert(surface_id, controller);
-                                            if let Some(ref conn) = window_state.connection {
-                                                let _ = conn.flush();
-                                            }
-                                            log::debug!("start_hidden: created controller and hid surface {}", surface_id);
-                                        } else {
-                                            log::warn!("start_hidden: visibility manager not available");
-                                        }
+                                        window_state.hide_before_first_commit(
+                                            &wl_surface,
+                                            &qh,
+                                            HiddenStart {
+                                                without_animating: start_hidden_without_animating,
+                                                follow_pointer,
+                                                follow_focus,
+                                            },
+                                        );
                                     } else if (transition.is_some() || follow_pointer || follow_focus)
                                         && let Some(manager) = &window_state.layer_surface_visibility_manager
                                     {
@@ -9452,6 +9498,9 @@ mod shortcuts_inhibit_tests;
 
 #[cfg(test)]
 mod requested_surface_tests;
+
+#[cfg(test)]
+mod start_hidden_tests;
 
 #[cfg(test)]
 mod popup_fade_tests;
