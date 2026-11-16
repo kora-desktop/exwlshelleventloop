@@ -50,3 +50,12 @@ cosmic-protocols = { workspace = true, optional = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+wayland-server = "0.31"
+wayland-protocols = { workspace = true, features = ["server"] }
+wayland-protocols-wlr = { workspace = true, features = ["server"] }
+
+[[test]]
+name = "connection_lost"
+harness = false

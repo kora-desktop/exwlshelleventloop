@@ -169,7 +169,7 @@ use waycrate_xkbkeycode::xkb_keyboard::RepeatInfo;
 
 use wayland_client::{
     ConnectError, Connection, Dispatch, DispatchError, EventQueue, Proxy, QueueHandle, WEnum,
-    backend::ObjectId,
+    backend::{ObjectId, WaylandError},
     delegate_noop, event_created_child,
     globals::{BindError, GlobalError, GlobalList, GlobalListContents, registry_queue_init},
     protocol::{
@@ -288,6 +288,8 @@ pub enum LayerEventError {
     TempFileCreateFailed(#[from] std::io::Error),
     #[error("Event Loop Error")]
     EventLoopInitError(#[from] CallLoopError),
+    #[error("the Wayland connection was lost: {0}")]
+    ConnectionLost(WaylandError),
 }
 
 pub mod reexport {
@@ -8195,8 +8197,22 @@ impl<T: 'static> WindowState<T> {
             EventLoop::try_new().expect("Failed to initialize the event loop");
 
         let event_queue = connection.new_event_queue::<EventWrapper<Self, F>>();
-        WaylandSource::new(connection.clone(), event_queue)
-            .insert(event_loop.handle())
+        let source_connection = connection.clone();
+        let lost_connection = connection.clone();
+        event_loop
+            .handle()
+            .insert_source(
+                WaylandSource::new(connection.clone(), event_queue),
+                move |_, queue, data| {
+                    let dispatched = queue.dispatch_pending(data)?;
+                    // Neither wayland-client nor the source stops on a protocol error, and the
+                    // closed socket then stays readable: end the loop instead of spinning on it.
+                    match source_connection.backend().last_error() {
+                        Some(error) => Err(DispatchError::Backend(error)),
+                        None => Ok(dispatched),
+                    }
+                },
+            )
             .expect("Failed to init wayland source");
         let mut state = EventWrapper {
             raw: self,
@@ -9388,7 +9404,10 @@ impl<T: 'static> WindowState<T> {
                         .ok();
                 }
             })
-            .map_err(LayerEventError::EventLoopInitError)?;
+            .map_err(|error| match lost_connection.backend().last_error() {
+                Some(lost) => LayerEventError::ConnectionLost(lost),
+                None => LayerEventError::EventLoopInitError(error),
+            })?;
         Ok(())
     }
 
