@@ -25,6 +25,24 @@ where
     (x.try_into().unwrap(), y.try_into().unwrap())
 }
 
+/// The iced events for one surface event. As in winit, an enter is followed by a move to
+/// where the pointer entered, so an app learns where a still pointer is when a surface maps
+/// under it.
+pub fn window_events(
+    layerevent: &LayerShellEvent,
+    application_scale_factor: f64,
+    modifiers: ModifiersState,
+) -> Vec<IcedEvent> {
+    let mut events: Vec<IcedEvent> = window_event(layerevent, application_scale_factor, modifiers)
+        .into_iter()
+        .collect();
+    if let LayerShellEvent::CursorEnter { x, y } = layerevent {
+        let moved = LayerShellEvent::CursorMoved { x: *x, y: *y };
+        events.extend(window_event(&moved, application_scale_factor, modifiers));
+    }
+    events
+}
+
 pub fn window_event(
     layerevent: &LayerShellEvent,
     application_scale_factor: f64,
@@ -400,5 +418,31 @@ mod scroll_tests {
                 delta: mouse::ScrollDelta::Pixels { x: -0.0, y: -2.0 },
             }))
         );
+    }
+}
+
+#[cfg(test)]
+mod pointer_tests {
+    use super::*;
+
+    #[test]
+    fn an_enter_says_where_the_pointer_is() {
+        let enter = LayerShellEvent::CursorEnter { x: 300.0, y: 120.0 };
+        let events = window_events(&enter, 1.5, ModifiersState::empty());
+        assert_eq!(
+            events,
+            vec![
+                IcedEvent::Mouse(mouse::Event::CursorEntered),
+                IcedEvent::Mouse(mouse::Event::CursorMoved {
+                    position: iced_core::Point::new(200.0, 80.0),
+                }),
+            ]
+        );
+    }
+
+    #[test]
+    fn other_events_convert_alone() {
+        let events = window_events(&LayerShellEvent::CursorLeft, 1.0, ModifiersState::empty());
+        assert_eq!(events, vec![IcedEvent::Mouse(mouse::Event::CursorLeft)]);
     }
 }
