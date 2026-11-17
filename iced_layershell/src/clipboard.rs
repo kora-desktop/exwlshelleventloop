@@ -31,6 +31,11 @@ impl LayerShellClipboard {
         }
     }
 
+    /// Whether it speaks to the compositor's clipboard.
+    pub fn is_connected(&self) -> bool {
+        matches!(self.state, State::Connected(_))
+    }
+
     /// Reads the current content of the [`Clipboard`] synchronously.
     pub fn read_sync(&self, kind: Kind) -> Result<Content, Error> {
         match &self.state {
