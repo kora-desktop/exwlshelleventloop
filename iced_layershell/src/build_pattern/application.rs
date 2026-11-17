@@ -577,6 +577,85 @@ pub fn with_scale_factor<P: Program>(
     }
 }
 
+/// Draws a window with `f` when it returns an element, and with the program's own view
+/// otherwise, so a single application can fill its popups.
+pub fn with_window_view<P: Program, F>(
+    program: P,
+    f: F,
+) -> impl Program<State = P::State, Message = P::Message, Theme = P::Theme>
+where
+    F: for<'a> Fn(
+        &'a P::State,
+        iced_core::window::Id,
+    ) -> Option<Element<'a, P::Message, P::Theme, P::Renderer>>,
+{
+    struct WithWindowView<P, F> {
+        program: P,
+        view: F,
+    }
+
+    impl<P: Program, F> Program for WithWindowView<P, F>
+    where
+        F: for<'a> Fn(
+            &'a P::State,
+            iced_core::window::Id,
+        ) -> Option<Element<'a, P::Message, P::Theme, P::Renderer>>,
+    {
+        type State = P::State;
+        type Message = P::Message;
+        type Theme = P::Theme;
+        type Renderer = P::Renderer;
+        type Executor = P::Executor;
+
+        fn name() -> &'static str {
+            P::name()
+        }
+
+        fn update(&self, state: &mut Self::State, message: Self::Message) -> Task<Self::Message> {
+            self.program.update(state, message)
+        }
+
+        fn view<'a>(
+            &self,
+            state: &'a Self::State,
+            window: iced_core::window::Id,
+        ) -> Element<'a, Self::Message, Self::Theme, Self::Renderer> {
+            match (self.view)(state, window) {
+                Some(element) => element,
+                None => self.program.view(state, window),
+            }
+        }
+
+        fn subscription(&self, state: &Self::State) -> iced_futures::Subscription<Self::Message> {
+            self.program.subscription(state)
+        }
+
+        fn theme(&self, state: &Self::State, window: iced_core::window::Id) -> Option<Self::Theme> {
+            self.program.theme(state, window)
+        }
+
+        fn style(&self, state: &Self::State, theme: &Self::Theme) -> crate::Appearance {
+            self.program.style(state, theme)
+        }
+
+        fn scale_factor(&self, state: &Self::State, id: iced_core::window::Id) -> f32 {
+            self.program.scale_factor(state, id)
+        }
+        fn boot(&self) -> (Self::State, Task<Self::Message>) {
+            self.program.boot()
+        }
+        fn settings(&self) -> iced_core::Settings {
+            Default::default()
+        }
+
+        fn window(&self) -> Option<iced_core::window::Settings> {
+            None
+        }
+    }
+
+    WithWindowView { program, view: f }
+}
+
 impl<P: Program> SingleApplication<P> {
     pub fn run(self) -> Result
     where
@@ -738,6 +817,25 @@ impl<P: Program> SingleApplication<P> {
     {
         SingleApplication {
             raw: with_scale_factor(self.raw, move |state| debug::hot(|| f(state))),
+            settings: self.settings,
+            namespace: self.namespace,
+            automation: self.automation,
+        }
+    }
+    /// Draws the windows `f` returns an element for, such as the application's popups,
+    /// with that element. Every other window, the layer surface included, keeps `view`.
+    pub fn window_view<F>(
+        self,
+        f: F,
+    ) -> SingleApplication<impl Program<State = P::State, Message = P::Message, Theme = P::Theme>>
+    where
+        F: for<'a> Fn(
+            &'a P::State,
+            iced_core::window::Id,
+        ) -> Option<Element<'a, P::Message, P::Theme, P::Renderer>>,
+    {
+        SingleApplication {
+            raw: with_window_view(self.raw, f),
             settings: self.settings,
             namespace: self.namespace,
             automation: self.automation,
