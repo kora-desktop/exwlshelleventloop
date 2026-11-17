@@ -1211,6 +1211,9 @@ struct PendingAxisFrame {
 pub struct WindowState<T> {
     outputs: Vec<(u32, wl_output::WlOutput)>,
     current_surface: Option<WlSurface>,
+    /// The surface that holds the keyboard, from `wl_keyboard` enter and leave only. A
+    /// click on a surface that never takes the keyboard must not move where keys go.
+    keyboard_surface: Option<WlSurface>,
     active_surfaces: HashMap<Option<i32>, (WlSurface, Option<id::Id>)>,
     units: Vec<WindowStateUnit<T>>,
     message: Vec<(Option<id::Id>, DispatchMessageInner)>,
@@ -4311,6 +4314,7 @@ impl<T> Default for WindowState<T> {
         Self {
             outputs: Vec::new(),
             current_surface: None,
+            keyboard_surface: None,
             active_surfaces: HashMap::new(),
             units: Vec::new(),
             message: Vec::new(),
@@ -4517,12 +4521,19 @@ impl<T> WindowState<T> {
             .position(|unit| Some(&unit.wl_surface) == self.current_surface.as_ref())
     }
 
-    /// get the current focused surface id
+    /// The surface last clicked, touched, created or given the keyboard.
     pub fn current_surface_id(&self) -> Option<id::Id> {
         self.units
             .iter()
             .find(|unit| Some(&unit.wl_surface) == self.current_surface.as_ref())
             .map(|unit| unit.id())
+    }
+
+    /// The surface that holds the keyboard, where key events go.
+    pub fn keyboard_surface_id(&self) -> Option<id::Id> {
+        self.keyboard_surface
+            .as_ref()
+            .and_then(|surface| self.get_id_from_surface(surface))
     }
 
     fn get_id_from_surface(&self, surface: &WlSurface) -> Option<id::Id> {
@@ -4689,7 +4700,7 @@ impl<T: 'static> Dispatch<wl_seat::WlSeat, ()> for WindowState<T> {
                     keyboard_installing = false;
                     let keyboard = state.keyboard_state.take().unwrap();
                     state.keyboard_state = Some(keyboard.update(seat, qh, ()));
-                    if let Some(surface_id) = state.current_surface_id() {
+                    if let Some(surface_id) = state.keyboard_surface_id() {
                         state
                             .message
                             .push((Some(surface_id), DispatchMessageInner::Unfocus));
@@ -4744,7 +4755,7 @@ impl<T> Dispatch<wl_keyboard::WlKeyboard, ()> for WindowState<T> {
 
         use keyboard::*;
         use xkb_keyboard::ElementState;
-        let surface_id = state.current_surface_id();
+        let surface_id = state.keyboard_surface_id();
 
         match event {
             wl_keyboard::Event::Keymap { format, fd, size } => match format {
@@ -4769,6 +4780,7 @@ impl<T> Dispatch<wl_keyboard::WlKeyboard, ()> for WindowState<T> {
                         .message
                         .push((Some(id), DispatchMessageInner::Focused(id)));
                 }
+                state.keyboard_surface = Some(surface.clone());
                 state.update_current_surface(Some(surface));
                 let keyboard_state = state.keyboard_state.as_mut().unwrap();
                 if let Some(token) = keyboard_state.repeat_token.take() {
@@ -4781,7 +4793,7 @@ impl<T> Dispatch<wl_keyboard::WlKeyboard, ()> for WindowState<T> {
                 // created surface, causing the Unfocus to be misattributed.
                 let leave_id = state.get_id_from_surface(&surface);
                 log::info!(
-                    "wl_keyboard::Leave event - emitting Unfocus for surface {:?} (current_surface={:?})",
+                    "wl_keyboard::Leave event - emitting Unfocus for surface {:?} (keyboard_surface={:?})",
                     leave_id,
                     surface_id
                 );
@@ -4797,6 +4809,9 @@ impl<T> Dispatch<wl_keyboard::WlKeyboard, ()> for WindowState<T> {
                 // have advanced to a newly created surface, which must be kept.
                 if state.current_surface.as_ref() == Some(&surface) {
                     state.current_surface = None;
+                }
+                if state.keyboard_surface.as_ref() == Some(&surface) {
+                    state.keyboard_surface = None;
                 }
                 let keyboard_state = state.keyboard_state.as_mut().unwrap();
                 keyboard_state.current_repeat = None;
@@ -4898,7 +4913,7 @@ impl<T> Dispatch<wl_keyboard::WlKeyboard, ()> for WindowState<T> {
                 let modifiers = xkb_state.modifiers();
 
                 state.message.push((
-                    state.current_surface_id(),
+                    surface_id,
                     DispatchMessageInner::ModifiersChanged(modifiers.into()),
                 ))
             }
