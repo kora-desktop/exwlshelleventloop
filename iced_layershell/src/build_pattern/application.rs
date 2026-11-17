@@ -161,7 +161,9 @@ pub fn application<State, Message, Theme, Renderer>(
     namespace: impl NameSpace,
     update: impl UpdateFn<State, Message>,
     view: impl for<'a> self::ViewFn<'a, State, Message, Theme, Renderer>,
-) -> SingleApplication<impl Program<Message = Message, Theme = Theme, State = State>>
+) -> SingleApplication<
+    impl Program<Message = Message, Theme = Theme, State = State, Renderer = Renderer>,
+>
 where
     State: 'static,
     Message:
@@ -241,7 +243,8 @@ where
 
 pub fn with_executor<P: Program, E: iced_futures::Executor>(
     program: P,
-) -> impl Program<State = P::State, Message = P::Message, Theme = P::Theme> {
+) -> impl Program<State = P::State, Message = P::Message, Theme = P::Theme, Renderer = P::Renderer>
+{
     use std::marker::PhantomData;
 
     struct WithExecutor<P, E> {
@@ -311,7 +314,8 @@ pub fn with_executor<P: Program, E: iced_futures::Executor>(
 pub fn with_subscription<P: Program>(
     program: P,
     f: impl Fn(&P::State) -> iced_futures::Subscription<P::Message>,
-) -> impl Program<State = P::State, Message = P::Message, Theme = P::Theme> {
+) -> impl Program<State = P::State, Message = P::Message, Theme = P::Theme, Renderer = P::Renderer>
+{
     struct WithSubscription<P, F> {
         program: P,
         subscription: F,
@@ -378,7 +382,8 @@ pub fn with_subscription<P: Program>(
 pub fn with_theme<P: Program>(
     program: P,
     f: impl Fn(&P::State) -> Option<P::Theme>,
-) -> impl Program<State = P::State, Message = P::Message, Theme = P::Theme> {
+) -> impl Program<State = P::State, Message = P::Message, Theme = P::Theme, Renderer = P::Renderer>
+{
     struct WithTheme<P, F> {
         program: P,
         theme: F,
@@ -447,7 +452,8 @@ pub fn with_theme<P: Program>(
 pub fn with_style<P: Program>(
     program: P,
     f: impl Fn(&P::State, &P::Theme) -> crate::Appearance,
-) -> impl Program<State = P::State, Message = P::Message, Theme = P::Theme> {
+) -> impl Program<State = P::State, Message = P::Message, Theme = P::Theme, Renderer = P::Renderer>
+{
     struct WithStyle<P, F> {
         program: P,
         style: F,
@@ -512,7 +518,8 @@ pub fn with_style<P: Program>(
 pub fn with_scale_factor<P: Program>(
     program: P,
     f: impl Fn(&P::State) -> f32,
-) -> impl Program<State = P::State, Message = P::Message, Theme = P::Theme> {
+) -> impl Program<State = P::State, Message = P::Message, Theme = P::Theme, Renderer = P::Renderer>
+{
     struct WithScaleFactor<P, F> {
         program: P,
         scale_factor: F,
@@ -582,7 +589,7 @@ pub fn with_scale_factor<P: Program>(
 pub fn with_window_view<P: Program, F>(
     program: P,
     f: F,
-) -> impl Program<State = P::State, Message = P::Message, Theme = P::Theme>
+) -> impl Program<State = P::State, Message = P::Message, Theme = P::Theme, Renderer = P::Renderer>
 where
     F: for<'a> Fn(
         &'a P::State,
@@ -772,8 +779,9 @@ impl<P: Program> SingleApplication<P> {
     pub fn style(
         self,
         f: impl Fn(&P::State, &P::Theme) -> crate::Appearance,
-    ) -> SingleApplication<impl Program<State = P::State, Message = P::Message, Theme = P::Theme>>
-    {
+    ) -> SingleApplication<
+        impl Program<State = P::State, Message = P::Message, Theme = P::Theme, Renderer = P::Renderer>,
+    > {
         SingleApplication {
             raw: with_style(self.raw, move |state, theme| f(state, theme)),
             settings: self.settings,
@@ -785,8 +793,9 @@ impl<P: Program> SingleApplication<P> {
     pub fn subscription(
         self,
         f: impl Fn(&P::State) -> iced_futures::Subscription<P::Message>,
-    ) -> SingleApplication<impl Program<State = P::State, Message = P::Message, Theme = P::Theme>>
-    {
+    ) -> SingleApplication<
+        impl Program<State = P::State, Message = P::Message, Theme = P::Theme, Renderer = P::Renderer>,
+    > {
         SingleApplication {
             raw: with_subscription(self.raw, move |state| debug::hot(|| f(state))),
             settings: self.settings,
@@ -799,8 +808,9 @@ impl<P: Program> SingleApplication<P> {
     pub fn theme(
         self,
         f: impl ThemeFn<P::State, P::Theme>,
-    ) -> SingleApplication<impl Program<State = P::State, Message = P::Message, Theme = P::Theme>>
-    {
+    ) -> SingleApplication<
+        impl Program<State = P::State, Message = P::Message, Theme = P::Theme, Renderer = P::Renderer>,
+    > {
         SingleApplication {
             raw: with_theme(self.raw, move |state| debug::hot(|| f.theme(state))),
             settings: self.settings,
@@ -813,8 +823,9 @@ impl<P: Program> SingleApplication<P> {
     pub fn scale_factor(
         self,
         f: impl Fn(&P::State) -> f32,
-    ) -> SingleApplication<impl Program<State = P::State, Message = P::Message, Theme = P::Theme>>
-    {
+    ) -> SingleApplication<
+        impl Program<State = P::State, Message = P::Message, Theme = P::Theme, Renderer = P::Renderer>,
+    > {
         SingleApplication {
             raw: with_scale_factor(self.raw, move |state| debug::hot(|| f(state))),
             settings: self.settings,
@@ -827,7 +838,9 @@ impl<P: Program> SingleApplication<P> {
     pub fn window_view<F>(
         self,
         f: F,
-    ) -> SingleApplication<impl Program<State = P::State, Message = P::Message, Theme = P::Theme>>
+    ) -> SingleApplication<
+        impl Program<State = P::State, Message = P::Message, Theme = P::Theme, Renderer = P::Renderer>,
+    >
     where
         F: for<'a> Fn(
             &'a P::State,
@@ -844,7 +857,9 @@ impl<P: Program> SingleApplication<P> {
     /// Sets the executor of the [`SingleApplication`].
     pub fn executor<E>(
         self,
-    ) -> SingleApplication<impl Program<State = P::State, Message = P::Message, Theme = P::Theme>>
+    ) -> SingleApplication<
+        impl Program<State = P::State, Message = P::Message, Theme = P::Theme, Renderer = P::Renderer>,
+    >
     where
         E: iced_futures::Executor,
     {
