@@ -10,6 +10,8 @@
 //!
 //! Use this to create taskbars and docks that need to track open windows.
 
+#[cfg(feature = "cosmic-toplevel")]
+use wayland_client::protocol::wl_output::WlOutput;
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
 
 // ext_foreign_toplevel_list_v1 protocol (standard, minimal)
@@ -64,6 +66,20 @@ pub struct ToplevelInfo {
     pub is_minimized: bool,
     /// Whether the window is fullscreen
     pub is_fullscreen: bool,
+    /// Where the window sits on each output it is on, header included. Empty
+    /// unless COSMIC toplevel info v2 is available.
+    pub geometry: Vec<ToplevelGeometry>,
+}
+
+/// A toplevel's rectangle on one output, in that output's logical coordinates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToplevelGeometry {
+    /// The output's `xdg_output` name.
+    pub output: String,
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
 }
 
 impl ToplevelInfo {
@@ -102,6 +118,7 @@ pub(crate) struct ToplevelHandleData {
     pub is_maximized: bool,
     pub is_minimized: bool,
     pub is_fullscreen: bool,
+    pub geometry: Vec<ToplevelGeometry>,
     /// Whether initial properties have been received (done event received)
     pub initialized: bool,
 }
@@ -119,6 +136,7 @@ impl ToplevelHandleData {
             is_maximized: self.is_maximized,
             is_minimized: self.is_minimized,
             is_fullscreen: self.is_fullscreen,
+            geometry: self.geometry.clone(),
         }
     }
 }
@@ -575,6 +593,9 @@ pub trait CosmicToplevelHandler: ForeignToplevelHandler {
 
     /// Get the ext handle ID for a cosmic handle ID
     fn get_ext_handle_id(&self, cosmic_id: u32) -> Option<u32>;
+
+    /// `output`'s `xdg_output` name, once the compositor has sent it.
+    fn output_name(&self, output: &WlOutput) -> Option<String>;
 }
 
 #[cfg(feature = "cosmic-toplevel")]
@@ -651,8 +672,33 @@ where
             zcosmic_toplevel_handle_v1::Event::OutputEnter { .. } => {
                 // Could track which outputs the toplevel is on
             }
-            zcosmic_toplevel_handle_v1::Event::OutputLeave { .. } => {
-                // Could track which outputs the toplevel is on
+            zcosmic_toplevel_handle_v1::Event::OutputLeave { output } => {
+                if let Some(name) = state.output_name(&output) {
+                    state
+                        .get_toplevel_data(ext_id)
+                        .geometry
+                        .retain(|g| g.output != name);
+                }
+            }
+            zcosmic_toplevel_handle_v1::Event::Geometry {
+                output,
+                x,
+                y,
+                width,
+                height,
+            } => {
+                let Some(name) = state.output_name(&output) else {
+                    return;
+                };
+                let geometry = &mut state.get_toplevel_data(ext_id).geometry;
+                geometry.retain(|g| g.output != name);
+                geometry.push(ToplevelGeometry {
+                    output: name,
+                    x,
+                    y,
+                    width,
+                    height,
+                });
             }
             zcosmic_toplevel_handle_v1::Event::ExtWorkspaceEnter { workspace } => {
                 let id = workspace.id().protocol_id();
@@ -915,4 +961,82 @@ fn execute_wlr_action(
     }
 
     true
+}
+
+#[cfg(all(test, feature = "cosmic-toplevel"))]
+mod tests {
+    use super::*;
+    use crate::{WindowState, ZxdgOutputInfo};
+    use std::os::unix::net::UnixStream;
+    use wayland_protocols::xdg::xdg_output::zv1::client::zxdg_output_v1::ZxdgOutputV1;
+
+    #[test]
+    fn a_window_keeps_its_place_on_each_named_output() {
+        let (socket, _peer) = UnixStream::pair().unwrap();
+        let connection = Connection::from_socket(socket).unwrap();
+        let queue = connection.new_event_queue::<WindowState<()>>();
+        let qh = queue.handle();
+        let registry = connection.display().get_registry(&qh, ());
+        let built_in = registry.bind::<WlOutput, _, _>(1, 4, &qh, ());
+        let external = registry.bind::<WlOutput, _, _>(2, 4, &qh, ());
+        let unnamed = registry.bind::<WlOutput, _, _>(3, 4, &qh, ());
+        let mut state = WindowState::<()>::new("toplevel-geometry-test");
+        for (output, name) in [(&built_in, "eDP-1"), (&external, "DP-1"), (&unnamed, "")] {
+            let mut info =
+                ZxdgOutputInfo::new(ZxdgOutputV1::inert(connection.backend().downgrade()));
+            info.name = name.into();
+            state.output_watch.push((output.clone(), info));
+        }
+        let handle = ZcosmicToplevelHandleV1::inert(connection.backend().downgrade());
+        let data = CosmicToplevelHandleData { ext_handle_id: 7 };
+        let send = |state: &mut WindowState<()>, event| {
+            <() as Dispatch<ZcosmicToplevelHandleV1, CosmicToplevelHandleData, _>>::event(
+                state,
+                &handle,
+                event,
+                &data,
+                &connection,
+                &qh,
+            );
+        };
+        let place = |output: &WlOutput, x, width| zcosmic_toplevel_handle_v1::Event::Geometry {
+            output: output.clone(),
+            x,
+            y: 40,
+            width,
+            height: 600,
+        };
+        let at = |output: &str, x, width| ToplevelGeometry {
+            output: output.into(),
+            x,
+            y: 40,
+            width,
+            height: 600,
+        };
+        let info = |state: &mut WindowState<()>| state.get_toplevel_data(7).to_info(7).geometry;
+
+        send(&mut state, place(&built_in, 10, 800));
+        send(&mut state, place(&external, -300, 800));
+        send(&mut state, place(&unnamed, 0, 800));
+        assert_eq!(
+            info(&mut state),
+            vec![at("eDP-1", 10, 800), at("DP-1", -300, 800)],
+            "an output with no name yet is left out"
+        );
+
+        send(&mut state, place(&built_in, 200, 640));
+        assert_eq!(
+            info(&mut state),
+            vec![at("DP-1", -300, 800), at("eDP-1", 200, 640)],
+            "a move replaces the place on that output"
+        );
+
+        send(
+            &mut state,
+            zcosmic_toplevel_handle_v1::Event::OutputLeave {
+                output: external.clone(),
+            },
+        );
+        assert_eq!(info(&mut state), vec![at("eDP-1", 200, 640)]);
+    }
 }

@@ -5781,7 +5781,7 @@ impl<T> Dispatch<xdg_popup::XdgPopup, ()> for WindowState<T> {
 
 impl<T> WindowState<T> {
     /// `output`'s `xdg_output` name, once the compositor has sent it.
-    #[cfg(feature = "workspaces")]
+    #[cfg(any(feature = "workspaces", feature = "cosmic-toplevel"))]
     pub(crate) fn output_name(&self, output: &wl_output::WlOutput) -> Option<String> {
         self.output_watch
             .iter()
@@ -6966,6 +6966,10 @@ impl<T: 'static> foreign_toplevel::CosmicToplevelHandler for WindowState<T> {
 
     fn get_ext_handle_id(&self, cosmic_id: u32) -> Option<u32> {
         self.cosmic_to_ext_handle_map.get(&cosmic_id).copied()
+    }
+
+    fn output_name(&self, output: &wl_output::WlOutput) -> Option<String> {
+        WindowState::output_name(self, output)
     }
 }
 
