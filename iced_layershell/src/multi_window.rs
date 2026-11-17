@@ -504,13 +504,17 @@ where
             new_compositor.load_font(font);
         }
         self.compositor = Some(new_compositor);
-        self.clipboard = LayerShellClipboard::connect(&window);
+        if !self.clipboard.is_connected() {
+            self.clipboard = LayerShellClipboard::connect(&window);
+        }
         self
     }
 
+    /// The clipboard stays connected: a data device released while the selection changes
+    /// gets an offer libwayland drops without taking its id, and a later offer then ends
+    /// the connection with a protocol error.
     fn remove_compositor(&mut self) {
         self.compositor = None;
-        self.clipboard = LayerShellClipboard::unconnected();
     }
 
     /// Handle a layer shell event. Returns:
