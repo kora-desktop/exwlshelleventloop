@@ -1518,7 +1518,7 @@ where
             window.mouse_interaction = mouse::Interaction::Idle;
         }
 
-        if let Some(event) = conversion::window_event(
+        for event in conversion::window_events(
             &event,
             window.state.application_scale_factor(),
             window.state.modifiers(),
