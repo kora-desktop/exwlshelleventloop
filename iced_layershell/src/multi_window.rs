@@ -3113,6 +3113,14 @@ pub(crate) fn run_action<P, C, E: Executor>(
                     ev.activate_surface_with_token(&surface, token);
                 }
             }
+            // With no token handed over, the window asks with one of its own, as
+            // winit does on Wayland; `None` only clears a request, which has no
+            // lasting state here.
+            WindowAction::RequestUserAttention(id, Some(_)) => {
+                if let Some(surface) = window_surface(window_manager, ev, id) {
+                    ev.request_surface_attention(&surface);
+                }
+            }
             _ => {}
         },
         Action::System(action) => match action {

@@ -106,6 +106,32 @@ impl<T: 'static> WindowState<T> {
         Some((token, answered))
     }
 
+    /// Ask the compositor to raise and focus `surface` on this app's own behalf,
+    /// as winit's `request_user_attention` does on Wayland: a token minted for
+    /// the surface, then an activation with it. The compositor decides whether
+    /// that focuses the surface or only marks it urgent.
+    pub fn request_surface_attention(&mut self, surface: &WlSurface) {
+        self.mint_attention(surface);
+    }
+
+    /// [`Self::request_surface_attention`], returning the token and the sync
+    /// that bounds the wait for it.
+    pub(crate) fn mint_attention(
+        &mut self,
+        surface: &WlSurface,
+    ) -> Option<(XdgActivationTokenV1, WlCallback)> {
+        let activation = self.xdg_activation.clone()?;
+        let target = surface.clone();
+        self.mint_activation_token(
+            surface,
+            Box::new(move |token| {
+                if let Some(token) = token {
+                    activation.activate(token, &target);
+                }
+            }),
+        )
+    }
+
     /// Ask the compositor to activate `surface` with a `token` another client
     /// obtained, the way a single-instance app answers a second launch. The
     /// compositor decides from the token whether it may take focus.

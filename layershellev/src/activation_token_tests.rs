@@ -16,7 +16,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::{
 
 struct Fixture {
     connection: Connection,
-    _peer: UnixStream,
+    peer: UnixStream,
     qh: QueueHandle<WindowState<()>>,
     state: WindowState<()>,
     surface: WlSurface,
@@ -48,7 +48,7 @@ fn fixture(activation: bool) -> Fixture {
     );
     Fixture {
         connection,
-        _peer: peer,
+        peer,
         qh,
         state,
         surface,
@@ -98,6 +98,41 @@ impl Fixture {
             &self.connection,
             &self.qh,
         );
+    }
+
+    /// The `xdg_activation_v1.activate` requests sent so far, as (token, surface id),
+    /// read off the wire the compositor would see.
+    fn activations(&mut self) -> Vec<(String, u32)> {
+        /// `xdg_activation_v1.activate`'s opcode.
+        const ACTIVATE: u32 = 2;
+        self.connection.flush().unwrap();
+        self.peer.set_nonblocking(true).unwrap();
+        let mut wire = Vec::new();
+        let _ = std::io::Read::read_to_end(&mut self.peer, &mut wire);
+        let activation = self
+            .state
+            .xdg_activation
+            .as_ref()
+            .unwrap()
+            .id()
+            .protocol_id();
+        let word = |at: usize| u32::from_ne_bytes(wire[at..at + 4].try_into().unwrap());
+        let mut sent = Vec::new();
+        let mut at = 0;
+        while at + 8 <= wire.len() {
+            let (object, size, opcode) = (
+                word(at),
+                (word(at + 4) >> 16) as usize,
+                word(at + 4) & 0xffff,
+            );
+            if object == activation && opcode == ACTIVATE {
+                let len = word(at + 8) as usize;
+                let token = String::from_utf8(wire[at + 12..at + 12 + len - 1].to_vec()).unwrap();
+                sent.push((token, word(at + 12 + len.next_multiple_of(4))));
+            }
+            at += size;
+        }
+        sent
     }
 }
 
@@ -151,4 +186,44 @@ fn a_request_whose_connection_is_gone_answers_none() {
     drop(asked);
     drop(fixture);
     assert_eq!(reply.try_recv(), Ok(None));
+}
+
+/// A window that asks for attention with no token handed to it mints its own
+/// and is activated with that one.
+#[test]
+fn attention_activates_the_surface_with_the_token_it_minted() {
+    let mut fixture = fixture(true);
+    let surface = fixture.surface.clone();
+    let (token, answered) = fixture
+        .state
+        .mint_attention(&surface)
+        .expect("a token was asked for");
+    assert!(fixture.activations().is_empty(), "nothing before the token");
+
+    fixture.token_done(&token, "self-1");
+    fixture.sync_done(&answered);
+    assert_eq!(
+        fixture.activations(),
+        [("self-1".to_owned(), surface.id().protocol_id())]
+    );
+}
+
+#[test]
+fn attention_the_compositor_gives_no_token_activates_nothing() {
+    let mut fixture = fixture(true);
+    let surface = fixture.surface.clone();
+    let (_token, answered) = fixture
+        .state
+        .mint_attention(&surface)
+        .expect("a token was asked for");
+
+    fixture.sync_done(&answered);
+    assert!(fixture.activations().is_empty());
+}
+
+#[test]
+fn without_xdg_activation_attention_asks_nothing() {
+    let mut fixture = fixture(false);
+    let surface = fixture.surface.clone();
+    assert!(fixture.state.mint_attention(&surface).is_none());
 }
