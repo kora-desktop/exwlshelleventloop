@@ -161,7 +161,9 @@ pub fn application<State, Message, Theme, Renderer>(
     namespace: impl NameSpace,
     update: impl UpdateFn<State, Message>,
     view: impl for<'a> self::ViewFn<'a, State, Message, Theme, Renderer>,
-) -> SingleApplication<impl Program<Message = Message, Theme = Theme, State = State>>
+) -> SingleApplication<
+    impl Program<Message = Message, Theme = Theme, State = State, Renderer = Renderer>,
+>
 where
     State: 'static,
     Message:
@@ -241,7 +243,8 @@ where
 
 pub fn with_executor<P: Program, E: iced_futures::Executor>(
     program: P,
-) -> impl Program<State = P::State, Message = P::Message, Theme = P::Theme> {
+) -> impl Program<State = P::State, Message = P::Message, Theme = P::Theme, Renderer = P::Renderer>
+{
     use std::marker::PhantomData;
 
     struct WithExecutor<P, E> {
@@ -311,7 +314,8 @@ pub fn with_executor<P: Program, E: iced_futures::Executor>(
 pub fn with_subscription<P: Program>(
     program: P,
     f: impl Fn(&P::State) -> iced_futures::Subscription<P::Message>,
-) -> impl Program<State = P::State, Message = P::Message, Theme = P::Theme> {
+) -> impl Program<State = P::State, Message = P::Message, Theme = P::Theme, Renderer = P::Renderer>
+{
     struct WithSubscription<P, F> {
         program: P,
         subscription: F,
@@ -378,7 +382,8 @@ pub fn with_subscription<P: Program>(
 pub fn with_theme<P: Program>(
     program: P,
     f: impl Fn(&P::State) -> Option<P::Theme>,
-) -> impl Program<State = P::State, Message = P::Message, Theme = P::Theme> {
+) -> impl Program<State = P::State, Message = P::Message, Theme = P::Theme, Renderer = P::Renderer>
+{
     struct WithTheme<P, F> {
         program: P,
         theme: F,
@@ -447,7 +452,8 @@ pub fn with_theme<P: Program>(
 pub fn with_style<P: Program>(
     program: P,
     f: impl Fn(&P::State, &P::Theme) -> crate::Appearance,
-) -> impl Program<State = P::State, Message = P::Message, Theme = P::Theme> {
+) -> impl Program<State = P::State, Message = P::Message, Theme = P::Theme, Renderer = P::Renderer>
+{
     struct WithStyle<P, F> {
         program: P,
         style: F,
@@ -512,7 +518,8 @@ pub fn with_style<P: Program>(
 pub fn with_scale_factor<P: Program>(
     program: P,
     f: impl Fn(&P::State) -> f32,
-) -> impl Program<State = P::State, Message = P::Message, Theme = P::Theme> {
+) -> impl Program<State = P::State, Message = P::Message, Theme = P::Theme, Renderer = P::Renderer>
+{
     struct WithScaleFactor<P, F> {
         program: P,
         scale_factor: F,
@@ -575,6 +582,85 @@ pub fn with_scale_factor<P: Program>(
         program,
         scale_factor: f,
     }
+}
+
+/// Draws a window with `f` when it returns an element, and with the program's own view
+/// otherwise, so a single application can fill its popups.
+pub fn with_window_view<P: Program, F>(
+    program: P,
+    f: F,
+) -> impl Program<State = P::State, Message = P::Message, Theme = P::Theme, Renderer = P::Renderer>
+where
+    F: for<'a> Fn(
+        &'a P::State,
+        iced_core::window::Id,
+    ) -> Option<Element<'a, P::Message, P::Theme, P::Renderer>>,
+{
+    struct WithWindowView<P, F> {
+        program: P,
+        view: F,
+    }
+
+    impl<P: Program, F> Program for WithWindowView<P, F>
+    where
+        F: for<'a> Fn(
+            &'a P::State,
+            iced_core::window::Id,
+        ) -> Option<Element<'a, P::Message, P::Theme, P::Renderer>>,
+    {
+        type State = P::State;
+        type Message = P::Message;
+        type Theme = P::Theme;
+        type Renderer = P::Renderer;
+        type Executor = P::Executor;
+
+        fn name() -> &'static str {
+            P::name()
+        }
+
+        fn update(&self, state: &mut Self::State, message: Self::Message) -> Task<Self::Message> {
+            self.program.update(state, message)
+        }
+
+        fn view<'a>(
+            &self,
+            state: &'a Self::State,
+            window: iced_core::window::Id,
+        ) -> Element<'a, Self::Message, Self::Theme, Self::Renderer> {
+            match (self.view)(state, window) {
+                Some(element) => element,
+                None => self.program.view(state, window),
+            }
+        }
+
+        fn subscription(&self, state: &Self::State) -> iced_futures::Subscription<Self::Message> {
+            self.program.subscription(state)
+        }
+
+        fn theme(&self, state: &Self::State, window: iced_core::window::Id) -> Option<Self::Theme> {
+            self.program.theme(state, window)
+        }
+
+        fn style(&self, state: &Self::State, theme: &Self::Theme) -> crate::Appearance {
+            self.program.style(state, theme)
+        }
+
+        fn scale_factor(&self, state: &Self::State, id: iced_core::window::Id) -> f32 {
+            self.program.scale_factor(state, id)
+        }
+        fn boot(&self) -> (Self::State, Task<Self::Message>) {
+            self.program.boot()
+        }
+        fn settings(&self) -> iced_core::Settings {
+            Default::default()
+        }
+
+        fn window(&self) -> Option<iced_core::window::Settings> {
+            None
+        }
+    }
+
+    WithWindowView { program, view: f }
 }
 
 impl<P: Program> SingleApplication<P> {
@@ -693,8 +779,9 @@ impl<P: Program> SingleApplication<P> {
     pub fn style(
         self,
         f: impl Fn(&P::State, &P::Theme) -> crate::Appearance,
-    ) -> SingleApplication<impl Program<State = P::State, Message = P::Message, Theme = P::Theme>>
-    {
+    ) -> SingleApplication<
+        impl Program<State = P::State, Message = P::Message, Theme = P::Theme, Renderer = P::Renderer>,
+    > {
         SingleApplication {
             raw: with_style(self.raw, move |state, theme| f(state, theme)),
             settings: self.settings,
@@ -706,8 +793,9 @@ impl<P: Program> SingleApplication<P> {
     pub fn subscription(
         self,
         f: impl Fn(&P::State) -> iced_futures::Subscription<P::Message>,
-    ) -> SingleApplication<impl Program<State = P::State, Message = P::Message, Theme = P::Theme>>
-    {
+    ) -> SingleApplication<
+        impl Program<State = P::State, Message = P::Message, Theme = P::Theme, Renderer = P::Renderer>,
+    > {
         SingleApplication {
             raw: with_subscription(self.raw, move |state| debug::hot(|| f(state))),
             settings: self.settings,
@@ -720,8 +808,9 @@ impl<P: Program> SingleApplication<P> {
     pub fn theme(
         self,
         f: impl ThemeFn<P::State, P::Theme>,
-    ) -> SingleApplication<impl Program<State = P::State, Message = P::Message, Theme = P::Theme>>
-    {
+    ) -> SingleApplication<
+        impl Program<State = P::State, Message = P::Message, Theme = P::Theme, Renderer = P::Renderer>,
+    > {
         SingleApplication {
             raw: with_theme(self.raw, move |state| debug::hot(|| f.theme(state))),
             settings: self.settings,
@@ -734,10 +823,32 @@ impl<P: Program> SingleApplication<P> {
     pub fn scale_factor(
         self,
         f: impl Fn(&P::State) -> f32,
-    ) -> SingleApplication<impl Program<State = P::State, Message = P::Message, Theme = P::Theme>>
-    {
+    ) -> SingleApplication<
+        impl Program<State = P::State, Message = P::Message, Theme = P::Theme, Renderer = P::Renderer>,
+    > {
         SingleApplication {
             raw: with_scale_factor(self.raw, move |state| debug::hot(|| f(state))),
+            settings: self.settings,
+            namespace: self.namespace,
+            automation: self.automation,
+        }
+    }
+    /// Draws the windows `f` returns an element for, such as the application's popups,
+    /// with that element. Every other window, the layer surface included, keeps `view`.
+    pub fn window_view<F>(
+        self,
+        f: F,
+    ) -> SingleApplication<
+        impl Program<State = P::State, Message = P::Message, Theme = P::Theme, Renderer = P::Renderer>,
+    >
+    where
+        F: for<'a> Fn(
+            &'a P::State,
+            iced_core::window::Id,
+        ) -> Option<Element<'a, P::Message, P::Theme, P::Renderer>>,
+    {
+        SingleApplication {
+            raw: with_window_view(self.raw, f),
             settings: self.settings,
             namespace: self.namespace,
             automation: self.automation,
@@ -746,7 +857,9 @@ impl<P: Program> SingleApplication<P> {
     /// Sets the executor of the [`SingleApplication`].
     pub fn executor<E>(
         self,
-    ) -> SingleApplication<impl Program<State = P::State, Message = P::Message, Theme = P::Theme>>
+    ) -> SingleApplication<
+        impl Program<State = P::State, Message = P::Message, Theme = P::Theme, Renderer = P::Renderer>,
+    >
     where
         E: iced_futures::Executor,
     {
