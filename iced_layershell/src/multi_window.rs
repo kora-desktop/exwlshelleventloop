@@ -3058,7 +3058,7 @@ pub(crate) fn run_action<P, C, E: Executor>(
     cancelled_popups: &mut std::collections::HashSet<IcedId>,
     popup_pending_shadow: &mut std::collections::HashSet<IcedId>,
     fitted_popups: &mut Vec<FittedPopup>,
-    #[cfg_attr(not(feature = "a11y"), allow(unused_variables))] announcements: &mut Vec<String>,
+    announcements: &mut Vec<String>,
 ) where
     P: IcedProgram + 'static,
     C: Compositor<Renderer = P::Renderer> + 'static,
@@ -3262,10 +3262,10 @@ pub(crate) fn run_action<P, C, E: Executor>(
             // Tick is handled internally by the runtime
         }
         Action::Announce(text) => {
-            #[cfg(feature = "a11y")]
-            announcements.push(text);
-            #[cfg(not(feature = "a11y"))]
-            let _ = text;
+            // Read out with the next published tree; nothing reads them without `a11y`.
+            if cfg!(feature = "a11y") {
+                announcements.push(text);
+            }
         }
         Action::PlatformSpecific(platform_action) => {
             use iced_runtime::platform_specific;
