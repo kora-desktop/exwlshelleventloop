@@ -37,6 +37,12 @@ impl<P: Program> State<P>
 where
     P::Theme: DefaultStyle,
 {
+    /// The title the program gives this surface.
+    #[cfg(feature = "a11y")]
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
     fn set_title(&mut self, title: &str) {
         self.title = title.to_string();
         if let Some(toplevel) = &self.toplevel {
@@ -148,8 +154,9 @@ where
     }
 
     /// Puts iced's cursor for this surface at `position`, in logical pixels, for
-    /// input the automation door injects. The compositor's pointer doesn't move.
-    #[cfg(all(feature = "automation", target_os = "linux"))]
+    /// input the automation door or assistive technology injects. The
+    /// compositor's pointer doesn't move.
+    #[cfg(any(feature = "a11y", all(feature = "automation", target_os = "linux")))]
     pub fn place_cursor(&mut self, position: Point) {
         self.mouse_position = Some(position);
     }
