@@ -49,6 +49,8 @@ use std::{
 };
 use window_manager::Window;
 
+#[cfg(feature = "a11y")]
+mod a11y;
 mod event_queue;
 mod state;
 mod window_manager;
@@ -198,7 +200,8 @@ where
     #[cfg(not(all(feature = "linux-theme-detection", target_os = "linux")))]
     let system_theme = Mode::default();
 
-    let context = Context::<
+    #[cfg_attr(not(feature = "a11y"), allow(unused_mut))]
+    let mut context = Context::<
         P,
         <P as iced_program::Program>::Executor,
         <P::Renderer as iced_graphics::compositor::Default>::Compositor,
@@ -210,6 +213,10 @@ where
         system_theme,
         proxy_back,
     );
+    #[cfg(feature = "a11y")]
+    {
+        context.a11y.namespace = namespace.to_owned();
+    }
     let mut context_state = ContextState::Context(context);
     boot_span.finish();
 
@@ -379,6 +386,10 @@ where
     waiting_layer_shell_actions: Vec<(Option<IcedId>, LayershellCustomAction)>,
     iced_events: Vec<(IcedId, IcedEvent)>,
     messages: Vec<P::Message>,
+    /// What the program asked to announce, for the next published tree.
+    announcements: Vec<String>,
+    #[cfg(feature = "a11y")]
+    a11y: a11y::A11y,
     proxy: IcedProxy<Action<P::Message>>,
     /// Maps popup iced ID → layershell ID for popups that have been created
     /// (Show action processed) but not yet registered in window_manager
@@ -480,6 +491,9 @@ where
             waiting_layer_shell_actions: Default::default(),
             iced_events: Default::default(),
             messages: Default::default(),
+            announcements: Vec::new(),
+            #[cfg(feature = "a11y")]
+            a11y: a11y::A11y::new(proxy.clone()),
             proxy,
             pending_popups: HashMap::new(),
             cancelled_popups: std::collections::HashSet::new(),
@@ -1536,6 +1550,76 @@ where
     /// pending events. Runs before the pending events are handed out, so
     /// anything injected is processed in the same pass, exactly as if the
     /// compositor had sent it.
+    /// Publishes each surface's accessibility tree when it changed, and
+    /// queues the input that replays what assistive technology asked for.
+    #[cfg(feature = "a11y")]
+    fn serve_a11y(&mut self, ev: &mut WindowState<IcedId>) {
+        let titles: Vec<(IcedId, String)> = self
+            .window_manager
+            .iter_mut()
+            .map(|(id, window)| (id, window.state.title().to_owned()))
+            .collect();
+        self.a11y.sync(
+            titles.iter().map(|(id, title)| (*id, title.as_str())),
+            &self.iced_events,
+        );
+
+        for replay in self.a11y.drain() {
+            match replay {
+                a11y::Replay::Focus(id, widget_id) => {
+                    let Some(window) = self.window_manager.get_mut(id) else {
+                        continue;
+                    };
+                    let logical_size = window.state.viewport().logical_size();
+                    if let Some(mut ui) =
+                        self.user_interfaces
+                            .ui_mut(&id, &mut window.renderer, logical_size)
+                    {
+                        let mut focus = a11y::A11y::focus(widget_id);
+                        ui.operate(&window.renderer, &mut focus);
+                    }
+                    ev.request_refresh_all(RefreshRequest::NextFrame);
+                }
+                a11y::Replay::Input(id, position, events) => {
+                    let Some(window) = self.window_manager.get_mut(id) else {
+                        continue;
+                    };
+                    window.state.place_cursor(position);
+                    self.iced_events
+                        .extend(events.into_iter().map(|event| (id, event)));
+                }
+            }
+        }
+
+        let mut published = false;
+        for (id, title) in &titles {
+            if !self.a11y.wants_tree(*id) {
+                continue;
+            }
+            let Some(window) = self.window_manager.get_mut(*id) else {
+                continue;
+            };
+            let logical_size = window.state.viewport().logical_size();
+            let Some(mut ui) = self
+                .user_interfaces
+                .ui_mut(id, &mut window.renderer, logical_size)
+            else {
+                continue;
+            };
+            let renderer = &window.renderer;
+            self.a11y
+                .publish(*id, title, &self.announcements, |builder| {
+                    ui.operate(renderer, builder);
+                });
+            published = true;
+        }
+
+        if published {
+            self.announcements.clear();
+        }
+        self.a11y.published();
+    }
+
     #[cfg(all(feature = "automation", target_os = "linux"))]
     fn serve_automation(&mut self, ev: &mut WindowState<IcedId>) {
         use iced_automation::{Answer, Ask, Collector, Surface};
@@ -1763,6 +1847,7 @@ where
             &mut self.cancelled_popups,
             &mut self.popup_pending_shadow,
             &mut fitted_popups,
+            &mut self.announcements,
         );
         // A popup fitted to its content is refitted as that changes, like an
         // auto-sized layer surface, without the hidden first frame: it was measured.
@@ -2410,9 +2495,15 @@ where
         #[cfg(all(feature = "automation", target_os = "linux"))]
         self.serve_automation(ev);
 
+        #[cfg(feature = "a11y")]
+        self.serve_a11y(ev);
+
         if self.iced_events.is_empty() && self.messages.is_empty() {
             return;
         }
+
+        #[cfg(feature = "a11y")]
+        self.a11y.invalidate();
 
         tracing::debug!(
             "handle_normal_dispatch: iced_events={}, messages={}",
@@ -2967,6 +3058,7 @@ pub(crate) fn run_action<P, C, E: Executor>(
     cancelled_popups: &mut std::collections::HashSet<IcedId>,
     popup_pending_shadow: &mut std::collections::HashSet<IcedId>,
     fitted_popups: &mut Vec<FittedPopup>,
+    announcements: &mut Vec<String>,
 ) where
     P: IcedProgram + 'static,
     C: Compositor<Renderer = P::Renderer> + 'static,
@@ -3168,6 +3260,12 @@ pub(crate) fn run_action<P, C, E: Executor>(
         }
         Action::Tick => {
             // Tick is handled internally by the runtime
+        }
+        Action::Announce(text) => {
+            // Read out with the next published tree; nothing reads them without `a11y`.
+            if cfg!(feature = "a11y") {
+                announcements.push(text);
+            }
         }
         Action::PlatformSpecific(platform_action) => {
             use iced_runtime::platform_specific;
