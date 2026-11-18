@@ -4529,6 +4529,29 @@ impl<T> WindowState<T> {
             .map(|unit| unit.id())
     }
 
+    /// Queues one auto-repeat of the held `key`, marked as a repeat so a widget can tell it
+    /// from a new press. `None` once that key is no longer the one repeating.
+    fn push_key_repeat(
+        &mut self,
+        key: u32,
+        surface_id: Option<id::Id>,
+        pressed_state: ElementState,
+    ) -> Option<RepeatInfo> {
+        let keyboard_state = self.keyboard_state.as_mut()?;
+        if keyboard_state.current_repeat != Some(key) {
+            return None;
+        }
+        if let Some(mut key_context) = keyboard_state.xkb_context.key_context() {
+            let event = key_context.process_key_event(key, pressed_state, true);
+            let event = DispatchMessageInner::KeyboardInput {
+                event,
+                is_synthetic: false,
+            };
+            self.message.push((surface_id, event));
+        }
+        Some(keyboard_state.repeat_info)
+    }
+
     /// The surface that holds the keyboard, where key events go.
     pub fn keyboard_surface_id(&self) -> Option<id::Id> {
         self.keyboard_surface
@@ -9382,34 +9405,11 @@ impl<T: 'static> WindowState<T> {
                         .insert_source(timer, move |_, _, r_window_state| {
                             let state = &mut r_window_state.raw;
                             let event_handler = &mut r_window_state.fun;
-                            let keyboard_state = match state.keyboard_state.as_mut() {
-                                Some(keyboard_state) => keyboard_state,
-                                None => return TimeoutAction::Drop,
-                            };
-                            let repeat_keycode = match keyboard_state.current_repeat {
-                                Some(repeat_keycode) => repeat_keycode,
-                                None => return TimeoutAction::Drop,
-                            };
-                            // NOTE: not the same key
-                            if repeat_keycode != key {
+                            let Some(repeat_info) =
+                                state.push_key_repeat(key, surface_id, pressed_state)
+                            else {
                                 return TimeoutAction::Drop;
-                            }
-                            if let Some(mut key_context) = keyboard_state.xkb_context.key_context()
-                            {
-                                let event = key_context.process_key_event(
-                                    repeat_keycode,
-                                    pressed_state,
-                                    false,
-                                );
-                                let event = DispatchMessageInner::KeyboardInput {
-                                    event,
-                                    is_synthetic: false,
-                                };
-                                state.message.push((surface_id, event));
-                            }
-                            let repeat_info = keyboard_state.repeat_info;
-
-                            let _ = keyboard_state;
+                            };
                             state.handle_event(
                                 &mut *event_handler,
                                 LayerShellEvent::NormalDispatch,
