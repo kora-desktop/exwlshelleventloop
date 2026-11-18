@@ -27,9 +27,13 @@ workspaces = ["layershellev/workspaces"]
 # `cargo build --features iced_layershell/automation` (or icetron's
 # `automation` feature, which forwards here). Linux only.
 automation = ["dep:iced_automation"]
+# Publishes each surface's widgets to assistive technology (AT-SPI on Linux)
+# and replays the actions it asks for. Off by default.
+a11y = ["dep:iced_accessibility", "iced_program/a11y"]
 
 [dependencies]
 iced_automation = { workspace = true, optional = true }
+iced_accessibility = { workspace = true, optional = true }
 iced_renderer.workspace = true
 iced_runtime.workspace = true
 iced_core.workspace = true

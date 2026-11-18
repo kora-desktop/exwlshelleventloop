@@ -99,6 +99,7 @@ iced_devtools = { git = "https://github.com/playtron-os/iced.git" }
 iced_widget = { git = "https://github.com/playtron-os/iced.git" }
 #iced_widget = { path = "../iced/widget" }
 iced_automation = { git = "https://github.com/playtron-os/iced.git" }
+iced_accessibility = { git = "https://github.com/playtron-os/iced.git" }
 #iced_automation = { path = "../iced/automation" }
 window_clipboard = "0.5.0"
 
