@@ -1889,6 +1889,33 @@ impl<T> WindowState<T> {
         self.units.iter().any(|unit| unit.wl_surface.is_alive())
     }
 
+    /// Whether a `NewDisplay` for `output` should get a surface in `AllScreens` mode: the
+    /// output is still announced, and no surface bound to it is alive and staying.
+    /// A surface made for an output that is already gone is placed by cosmic-comp on the
+    /// active output instead, and nothing ever closes it there.
+    fn wants_surface_for(&self, output: &WlOutput) -> bool {
+        self.outputs.iter().any(|(_, known)| known == output)
+            && !self.units.iter().any(|unit| {
+                unit.wl_output.as_ref() == Some(output)
+                    && unit.wl_surface.is_alive()
+                    && !unit.request_flag.close
+            })
+    }
+
+    /// Close every surface bound to an output whose global was removed. The compositor
+    /// sends `closed` only for surfaces it had mapped on that output.
+    fn close_units_on(&mut self, removed: &[WlOutput]) {
+        for unit in &mut self.units {
+            if unit
+                .wl_output
+                .as_ref()
+                .is_some_and(|output| removed.contains(output))
+            {
+                unit.request_close();
+            }
+        }
+    }
+
     /// Execute a toplevel action (activate, close, minimize, etc.)
     ///
     /// Returns true if the action was executed, false if the handle was not found.
@@ -4687,6 +4714,7 @@ impl<T: 'static> Dispatch<wl_registry::WlRegistry, ()> for WindowState<T> {
                         !gone
                     });
                     state.sync_output_layout(false);
+                    state.close_units_on(&removed);
                 }
                 let removed_states = state
                     .units
@@ -8430,6 +8458,12 @@ impl<T: 'static> WindowState<T> {
                                 if !window_state.is_allscreens() && !recreate_lost_active {
                                     continue;
                                 }
+                                if window_state.is_allscreens()
+                                    && !window_state.wants_surface_for(output_display)
+                                {
+                                    log::info!("no new surface: its output is gone or has one");
+                                    continue;
+                                }
                                 // Active surfaces must remain output-agnostic after
                                 // recovery so the compositor can move them on show.
                                 let bound_output = (!recreate_lost_active).then_some(output_display);
@@ -9548,6 +9582,9 @@ mod tooltip_tests;
 
 #[cfg(test)]
 mod output_info_tests;
+
+#[cfg(test)]
+mod output_removal_tests;
 
 #[cfg(test)]
 mod size_answer_tests;
