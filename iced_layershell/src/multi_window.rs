@@ -1380,11 +1380,14 @@ where
             height,
         } = event
         {
+            let window =
+                layer_shell_id.and_then(|lid| self.window_manager.get_alias(lid).map(|(id, _)| id));
             crate::event::send_usable_area_event(crate::event::UsableAreaEvent {
                 x,
                 y,
                 width,
                 height,
+                window,
             });
             return true;
         }
