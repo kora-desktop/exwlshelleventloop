@@ -935,6 +935,9 @@ pub struct UsableAreaEvent {
     pub y: i32,
     pub width: i32,
     pub height: i32,
+    /// The surface whose output this is, so an app with a surface on every
+    /// output can tell them apart.
+    pub window: Option<iced_core::window::Id>,
 }
 
 #[derive(Debug)]
